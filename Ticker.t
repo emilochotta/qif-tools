@@ -10,8 +10,8 @@ use strict;
 use warnings;
 
 # a test method that runs 1 test
-sub test_push : Test(2) {
-    my $t = new Ticker('VANGUARD REIT');
+sub test_ByName : Test(2) {
+    my $t = Ticker::getByName('VANGUARD REIT');
     ok(defined($t), 'Ticker object was created');
     ok($t->isa('Ticker'), 'Ticker object isa ticker');
 };

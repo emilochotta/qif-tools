@@ -21,6 +21,15 @@ sub append
     push @{ $self }, $transaction;
 }
 
+sub printToStringArray
+{
+    my($self, $raS, $prefix) = @_;
+    
+    foreach my $k ( @{ $self } ) {
+	$k->printToStringArray($raS, $prefix);
+    }
+}
+
 1;
 
 

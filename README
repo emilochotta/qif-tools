@@ -1,3 +1,13 @@
 The purpose of this code is to pull financial info from QIF files
 (quicken) and do asset allocation analysis and put it into a format
 for uploading to morningstar.
+
+Classes and their relationships:
+
+Ticker -- A stock or other asset that *could* be owned.
+
+Transaction -- A buy, sell, or other action of a Ticker or cash.
+
+Holding -- Shares of a Ticker.  End result of multiple transactions.
+
+Account -- A collection of holdings.

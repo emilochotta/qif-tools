@@ -10,10 +10,10 @@ use strict;
 use warnings;
 
 # a test method that runs 1 test
-sub test_push : Test(2) {
+sub test_new : Test(2) {
     my $t = new Transaction();
-    ok(defined($t), 'Ticker object was created');
-    ok($t->isa('Transaction'), 'Ticker object isa ticker');
+    ok(defined($t), 'Transaction object was created');
+    ok($t->isa('Transaction'), 'Transaction object isa Transaction');
 };
 
 Test::Class->runtests;

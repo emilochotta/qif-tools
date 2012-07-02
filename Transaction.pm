@@ -1,21 +1,50 @@
 #!/bin/perl
 
-# A transaction is a financial investment transaction like buying or selling an asset.
+# A transaction is a financial investment transaction like buying or
+# selling an asset.
+
 package Transaction;
+
+use Finance::QIF;
+use Ticker qw($gCash);
 use strict;
 
 my $gDebug = 1;
+
+# Supported quick action types
+my %Actions = (
+    'Buy' => 1,
+    'BuyX' => 1,
+    'Cash' => 1,
+    'CGLong' => 1,
+    'CGLongX' => 1,
+    'CGShort' => 1,
+    'CGShortX' => 1,
+    'Div' => 1,
+    'DivX' => 1,
+    'MiscExpX' => 1,
+    'ReinvDiv' => 1,
+    'ReinvLg' => 1,
+    'ReinvSh' => 1,
+    'SellX' => 1,
+    'ShrsIn' => 1,
+    'ShrsOut' => 1,
+    'StkSplit' => 1,
+    'Sell' => 1,
+    );
 
 sub new
 {
     my $class = shift;
     my $self = {
-	_name => shift,
-        _symbol => shift,
-        _skip  => shift,
-        _yield  => shift,
-	_assetClass => shift,
-	_assetCategory => shift,
+	_date => shift,       # Must be defined
+	_action => shift,     # Must be defined
+	_name => shift,       # Must be defined
+	_ticker => shift,     # Must be defined
+	_price => shift,
+	_shares => shift,
+	_commision => shift,
+	_amount => shift,
     };
     bless $self, $class;
     return $self;
@@ -36,204 +65,127 @@ sub new
 #   commission: Commission fees related to transaction.
 #   account: Account related to security specific transaction.
 #   amount: Dollar amount of transaction.
-#   total: Dollar amount of transaction. This is generally the same as amount
-#   but in some cases can be higher. (Introduced in Quicken 2005 for windows)
+#   total: Dollar amount of transaction. This is generally the
+#     same as amount but in some cases can be higher.
+#     (Introduced in Quicken 2005 for windows)
 #
 # We skip the ones with *
 
 sub newFromQifRecord
 {
-    my $class = shift;
-    my $qif_record = shift;
+    my $record = shift;
+
+    $gDebug && print("Record: \n");
+    foreach my $k ( sort keys %{ $record } ) {
+	$record->{$k} =~ tr/\r\n,//d;
+	$record->{$k} =~ s/\s+$//;
+	$gDebug && print "  $k = $record->{$k}\n";
+    }
 
     if ( $record->{'header'} ne 'Type:Invst' ) {
-	&debug("Transaction must be an investment transaction.");
+	$gDebug && print("Transaction isn't an investment transaction.\n");
 	return undef;
     }
+#    Record: 
+#      action = Buy
+#      date = 11/ 8'10
+#      header = Type:Invst
+#      memo = BUY
+#      price = 71.1984
+#      quantity = 120
+#      security = VANGUARD MID CAP ETF
+#      status = R
+#      total = 8543.80
+#      transaction = 8543.80
+
+    my $date;
+    my $action;
+    my $name;
+    my $ticker;
+    my $price;
+    my $shares;
+    my $commision;
+    my $amount;
     
-    if ( defined($record->{$security}) ) {
-
-	if ( $gDebug ) {
-	    print "Record: \n";
-	    foreach my $k ( sort keys %{ $record } ) {
-		print "  $k = $record->{$k}\n";
-	    }
-	}
-
-	my $name = $record->{$security};
-	$name =~ tr/\r//d;
-#		print "Security \"$name\"\n";
-	next if ( defined($Skip{$name}) );
-	if ( ! defined($Tickers{$name}) ) {
-	    if ( !defined($namesSeen{$name}) ) {
-		$namesSeen{$name}++;
-		print "*** Add the following to \%Tickers or \%Skip\n";
-		print "    '", $name, "' => '',\n";
-		
-	    }
-	    next;
-	}
-	my $ticker = $Tickers{$name};
-	if ( ! defined($AssetClass{$ticker}) ) {
-	    if ( !defined($namesSeen{$name}) ) {
-		$namesSeen{$name}++;
-		print "*** Add the following to \%AssetClass\n";
-		print "    '", $ticker, "' => \$IntlStock | \$UsStock | \$Bond,\n";
-	    }
-	}
-	$record->{'Ticker'} = $ticker;
-	$record->{$security} = $name;
-	my $date = &Convert_Qif_Date($record->{'date'});
-	$record->{'date'} = $date;
-	$record->{'file'} = $basename;
-
-	# Copy the fields to fields keyed by keys that morningstar understands
-	foreach my $k ( keys %{ $record } ) {
-	    if ( defined $ToMstar{$k} ) {
-		$record->{$ToMstar{$k}} = $record->{$k};
-	    }
-	}
-
-	$record->{'Comm'} = 0 if ( !defined $record->{'Comm'} );
-
-	my $comm = $record->{'Comm'};
-	$comm =~ tr/,//d;
-	$comm =~ s/\s+$//;
-	$record->{'Comm'} = $comm;
-
-	my $price = $record->{'Price'};
-
-	# Use previous price if price undefined
-	if (! defined $record->{'Price'} && defined $rhQif->{$ticker}) {
-	    my $lastRow = scalar @{$rhQif->{$ticker}} - 1;
-	    $price = $rhQif->{$ticker}->[$lastRow]->{'Price'};
-	}
-
-	$price =~ tr/,//d;
-	$price =~ s/\s+$//;
-	$record->{'Price'} = $price;
-
-	if ( defined $record->{'Amount'} ) {
-	    my $amount = $record->{'Amount'};
-	    $amount =~ tr/,//d;
-	    $amount =~ s/\s+$//;
-	    $record->{'Amount'} = $amount;
-	}
-
-	if ( defined $record->{$Shares} ) {
-	    my $shares = $record->{$Shares};
-	    $shares =~ tr/,//d;
-	    $shares =~ s/\s+$//;
-	    $record->{$Shares} = $shares;
-	} else {
-	    # Calculate shares if unknown
-	    if ( defined $record->{'Amount'}
-		 && defined $record->{'Price'}
-		 && defined $record->{'Comm'} )
-	    {
-		$record->{$Shares} = ($record->{'Amount'} - $comm) / $price;
-	    }
-	}
-
-	# There are only 5 actions in morningstar: buy, sell, split, div, reinv
-	# We define extra psuedo actions: skip, add
-	# OLD comment:
-	#    There are only 4 actions in morningstar: buy, sell, split, div
-	#    We define extra psuedo actions: skip, cash-div
-	# All the 
-	my $action = $record->{'Action'};
-	$action =~ tr/\r//d;
-	if ( defined($Actions{$action}) ) {
-	    # $record->{'Action'} = $action = $Actions{$action};
-	    $action = $Actions{$action};
-	} else {
-	    print "Action \"$action\" unknown\n";
-	}
-	if ( $action eq 'buy' ) {
-	    $record->{'Action'} = $action;
-	} elsif ( $action eq 'add' ) {
-	    if ( defined $TreatAddAsBuy{$ticker} ) {
-		printf( "Treating add as buy for \"%s\" on %s\n",
-			$ticker, $date);
-		$record->{'Action'} = 'buy';
-	    } else {
-		next;
-	    }
-	} elsif ( $action eq 'remove' ) {
-	    if ( defined $TreatRemoveAsSell{$ticker} ) {
-		printf( "Treating remove as sell for \"%s\" on %s\n",
-			$ticker, $date);
-		$record->{'Action'} = 'sell';
-	    } else {
-		next;
-	    }
-	} elsif ( $action eq 'sell' ) {
-	    $record->{'Action'} = $action;
-	} elsif ( $action eq 'split' ) {
-	    if (defined $rhQif->{$ticker}) {
-		my $lastRow = scalar @{$rhQif->{$ticker}} - 1;
-		$record->{'Price'} = $rhQif->{$ticker}->[$lastRow]->{'Price'};
-	    }
-	    $record->{'Amount'} = 0;
-	    $record->{'Action'} = $action;
-	    if ( defined( $Splits{$ticker}{$date} ) ) {
-		$record->{$Shares} = $Splits{$ticker}{$date};
-	    } else {
-		printf( "WARNING: No split info for \"%s\" on %s\n",
-			$ticker, $date);
-	    }
-
-	} elsif ( $action eq 'div' ) {
-	    $record->{'Action'} = $action;
-	} elsif ( $action eq 'reinv' ) {
-	    $record->{'Action'} = $action;
-	} elsif ( $action eq 'skip' ) {
-	    next;
-	    
-	} elsif ( $action eq 'cash-div' ) {
-	    # This is the tricky one
-	    # Record a cash dividend as a
-	    # reinvDiv followed by a sale
-	    my $shares = $record->{$Shares};
-
-	    my $rhCopy = {};
-	    foreach my $k ( keys %{ $record } ) {
-		$rhCopy->{$k} = $record->{$k};
-	    }
-
-	    $rhCopy->{'Action'} = 'div';
-	    $record->{'Action'} = 'sell';
-	    push @{$rhQif->{$ticker}}, $rhCopy;
-
-	} elsif ( $action eq 'reinv-div' ) {
-	    # This is the tricky one
-	    # Record a reinvest dividend as a
-	    # reinvDiv followed by a buy
-	    my $shares = $record->{$Shares};
-	    my $price;
-
-	    my $rhCopy = {};
-	    foreach my $k ( keys %{ $record } ) {
-		$rhCopy->{$k} = $record->{$k};
-	    }
-
-	    $rhCopy->{'Action'} = 'div';
-	    $record->{'Action'} = 'buy';
-	    push @{$rhQif->{$ticker}}, $rhCopy;
-	} else {
-	    if ( !defined($rhActionsSeen->{$action}) ) {
-		$rhActionsSeen->{$action}++;
-		print "'", $action, "' => '',\n";
-	    }
-	}
-
-# 		print "Processed:\n";
-# 		foreach my $k ( sort keys %{ $record } ) {
-# 		    print "  $k = $record->{$k}\n";
-# 		}
-
-	push @{$rhQif->{$ticker}}, $record;
+    $date = &ConvertQifDate($record->{'date'});
+    $action = $record->{'action'};
+    if ( !defined($Actions{$action}) ) {
+	die "Action \"$action\" unknown\n";
     }
+    $amount = $record->{'total'} if defined $record->{'total'};
+
+    if ( $action eq 'Cash' ) {
+	$name = $Ticker::gCash;
+	$price = 1.0;
+	$shares = $amount if defined($amount);
+    } else {
+	if ( !defined($record->{'security'}) ) {
+	    $gDebug && print("Transaction has no security name.\n");
+	    return undef;
+	}
+	$name = $record->{'security'};
+	$price = $record->{'price'} if
+	    defined $record->{'price'};
+	$shares = $record->{'quantity'} if
+	    defined $record->{'quantity'};
+    }
+    $gDebug && print("Name \"$name\".\n");
+    $ticker = Ticker::getByName($name);
+
+    # Don't create transactions for ticker types marked
+    # "Skip".
+    $commision = 0;
+    $commision = $record->{'Comm'} if defined $record->{'Comm'};
+    
+    return Transaction->new(
+	$date,
+	$action,
+	$name,
+	$ticker,
+	$price,
+	$shares,
+	$commision,
+	$amount);
+}
+
+sub ConvertQifDate {
+    my $date = shift;
+    $date =~ tr/\"\r\n//d;
+    $date =~ s/\s*(\d+)\/\s*(\d+)'1(\d)/$1-$2-201$3/;
+    $date =~ s/\s*(\d+)\/\s*(\d+)' (\d)/$1-$2-200$3/;
+    $date =~ s/\s*(\d+)\/\s*(\d+)\/(\d+)/$1-$2-19$3/;
+    return $date;
+}
+
+sub ticker
+{
+    my ($self) = @_;
+    return $self->{_ticker};
+}
+
+sub printToStringArray
+{
+    my($self, $raS, $prefix) = @_;
+    
+    push @{$raS}, sprintf("%s\"Transaction\"", $prefix);
+    foreach my $k ( sort keys %{ $self } ) {
+	push @{$raS}, sprintf("%s  \"%s\": \"%s\"",
+			      $prefix, $k, $self->{$k});
+	if (ref($self->{$k}) eq 'Ticker') {
+	    $self->{$k}->printToStringArray($raS, $prefix . '  ');
+	}
+    }
+}
+
+sub symbol
+{
+    my ($self) = @_;
+    if (!defined($self->{_ticker})) {
+	my $raString = [];
+	print join("\n", $self->printToStringArray($raString, ''));
+	die('Ticker must be defined.');
+    }
+    return $self->{_ticker}->symbol();
 }
 
 1;

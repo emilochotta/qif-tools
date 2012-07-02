@@ -5,17 +5,25 @@
 # information about the ticker itself, rather than any shares of that
 # ticker.
 package Ticker;
-use strict;
+require Exporter;
+@ISA = qw(Exporter);
+@EXPORT_OK = qw($gCash);
 
+use strict;
 use AssetClass qw($US_STOCK, $INTL_STOCK, $BOND, $REAL_ASSET, $CASH);
+
+# Decided to treat cash as its own ticker type.
+# So, from a ticker perspective it will be consistent.
+our $gCash = 'Cash';
+
+our $gUnknown = 'Unknown';
 
 #
 # Every ticker ever purchased should be either in Skip or in Tickers
 #
-our %Skip = (
+my %Skip = (
     '2004-07 DP407070 Bin' => '1', # ESO
     '2007-07 FS783025 Bin' => '1', # ESO
-    '-Cash-' => '1',
     'TOTAL Investments' => '1',
     'A' => '1',
     'AGERE SYSTEMS INC CL A' => '1',
@@ -225,7 +233,9 @@ our %Skip = (
     'SCHWAB RETIREMENT ADVANTAGE' => '1',
     );
 
-our %Tickers = (
+my %Tickers = (
+    $gCash => $gCash,
+    $gUnknown => 0,
     'American Funds Growth Fund of Amer R4' => 'RGAEX',
     'Columbia Mid Cap Value Z' => 'NAMAX',
     'Eaton Vance Large-Cap Value I' => 'EILVX',
@@ -275,7 +285,8 @@ our %Tickers = (
     'William Blair International Growth N' => 'WBIGX',
     );
 
-our %AssetClass = (
+my %AssetClass = (
+    $gCash => $AssetClass::CASH,
     'ARTKX' => $AssetClass::INTL_STOCK,
     'ARTQX' => $AssetClass::US_STOCK,
     'AVPAX' => $AssetClass::US_STOCK,
@@ -372,10 +383,11 @@ our %AssetClass = (
     'WWNPX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
     );
 
-our $TickersBySymbol = {};
-our $TickersByName = {};
+my $TickersBySymbol = {};
+my $TickersByName = {};
 
-our %TickerToName = ();
+my %TickerToName = ();
+
 foreach my $k ( sort keys %Tickers ) {
     $TickerToName{$Tickers{$k}} = $k;
 }
@@ -384,36 +396,69 @@ sub new
 {
     my $class = shift;
     my $self = {
-	_name => shift,
-        _symbol => shift,
-        _skip  => shift,
-        _yield  => shift,
-	_assetClass => shift,
-	_assetCategory => shift,
+	_name => shift,   # Must be defined
+        _symbol => shift, # Must be defined
+        _skip  => shift,  # Must be defined
     };
 
-    # Must provide either name or symbol
-    if ( !defined( $self->{_symbol} ) && !defined( $self->{_name} ) ) {
-	print "** Ticker object must provide either symbol or name.\n";
+    # Must provide name and symbol
+    if ( !defined( $self->{_symbol} ) || !defined( $self->{_name} ) ) {
+	print "** Ticker object must provide symbol and name.\n";
 	die "";
     }
 
-    # Get the ticker from the name if not provided.
-    if (!defined( $self->{_symbol} )) {
-	if (defined($Tickers{ $self->{_name} })) {
-	    $self->{_symbol} = $Tickers{ $self->{_name} };
-	} elsif (defined($Skip{ $self->{_name} })) {
-	    # Will skip most stuff for this ticker
-	} else {
-	    print "** Add the following to \%Tickers or \%Skip in Ticker.pm\n";
-	    print "    '", $self->{_name}, "' => '',\n";
-	    die "";
-	}
-    }
+    # Set asset specific info from internal sources
+    $self->{_assetClass} = $AssetClass{$self->{_symbol}};
+
     bless $self, $class;
-    $TickersBySymbol->{ $self->{_symbol} };
-    $TickersByName->{ $self->{_name} };
+    $TickersBySymbol->{ $self->{_symbol} } = $self;
+    $TickersByName->{ $self->{_name} } = $self;
     return $self;
+}
+
+sub getByName
+{
+    my $name = shift;
+
+    # Share the objects instead of allocating new ones.
+    if ( defined($name) && defined($TickersByName->{$name})) {
+	return $TickersByName->{ $name };
+    }
+
+    # Get the skip value.  We don't create transactions
+    # for these Tickers.
+    my $skip = (defined($Skip{$name})) ? $Skip{$name} : 0;
+    
+    # Get the symbol from the name
+    my $symbol;
+    if (defined($Tickers{ $name })) {
+	$symbol = $Tickers{ $name };
+    } elsif ($skip) {
+	# Will skip most stuff for this ticker
+	$symbol = $gUnknown;
+    } else {
+	print "** Add the following to \%Tickers or \%Skip in Ticker.pm\n";
+	print "    '", $name, "' => '',\n";
+	die "";
+    }
+
+    return Ticker->new($name, $symbol, $skip);
+}
+
+sub symbol
+{
+    my ($self) = @_;
+    return $self->{_symbol};
+}
+
+sub printToStringArray
+{
+    my($self, $raS, $prefix) = @_;
+    
+    foreach my $k ( sort keys %{ $self } ) {
+	push @{$raS}, sprintf("%s  \"%s\": \"%s\"", $prefix, $k,
+			      $self->{$k});
+    }
 }
 
 sub Print
