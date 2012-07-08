@@ -7,14 +7,14 @@
 package Ticker;
 require Exporter;
 @ISA = qw(Exporter);
-@EXPORT_OK = qw($gCash);
+@EXPORT_OK = qw($kCash);
 
 use strict;
 use AssetClass qw($US_STOCK, $INTL_STOCK, $BOND, $REAL_ASSET, $CASH);
 
 # Decided to treat cash as its own ticker type.
 # So, from a ticker perspective it will be consistent.
-our $gCash = 'Cash';
+our $kCash = 'Cash';
 
 our $gUnknown = 'Unknown';
 
@@ -234,7 +234,7 @@ my %Skip = (
     );
 
 my %Tickers = (
-    $gCash => $gCash,
+    $kCash => $kCash,
     $gUnknown => 0,
     'American Funds Growth Fund of Amer R4' => 'RGAEX',
     'Columbia Mid Cap Value Z' => 'NAMAX',
@@ -286,7 +286,7 @@ my %Tickers = (
     );
 
 my %AssetClass = (
-    $gCash => $AssetClass::CASH,
+    $kCash => $AssetClass::CASH,
     'ARTKX' => $AssetClass::INTL_STOCK,
     'ARTQX' => $AssetClass::US_STOCK,
     'AVPAX' => $AssetClass::US_STOCK,

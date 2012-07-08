@@ -24,7 +24,7 @@ sub test_from_qif : Test(3) {
     ok($t->isa('Account'), 'Account object isa Account');
     my $raStrings = [];
     $t->printToStringArray($raStrings);
-    is(@$raStrings, 97, 'Returned expected number of strings');
+    is(@$raStrings, 118, 'Returned expected number of strings');
     print join("\n", @$raStrings);
 };
 

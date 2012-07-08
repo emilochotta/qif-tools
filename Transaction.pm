@@ -6,12 +6,12 @@
 package Transaction;
 
 use Finance::QIF;
-use Ticker qw($gCash);
+use Ticker qw($kCash);
 use strict;
 
 my $gDebug = 1;
 
-# Supported quick action types
+# Supported quicken action types
 my %Actions = (
     'Buy' => 1,
     'BuyX' => 1,
@@ -33,6 +33,37 @@ my %Actions = (
     'Sell' => 1,
     );
 
+# These are headers in the CSV file that morningstar import
+# understands.  They are in an array so that order is preserved.
+our @MstarHeaders = (
+    'Ticker',
+    'File',
+    'Date',
+    'Action',
+    'Name',
+    'Price',
+    'Shares/Ratio',
+    'Comm',
+    'Amount',
+    'Running'
+    );
+
+# Map from morningstar fields to Transaction object fields.
+our %MstarMap = (
+    'Ticker' => '_symbol',
+    'File' => '_file',
+    'Date' => '_date',
+    'Action' => '_action',
+    'Name' => '_name',
+    'Price' => '_price',
+    'Shares/Ratio' => '_shares',
+    'Comm' => '_commision',
+    'Amount' => '_amount',
+    'Running' => '_running',
+    );
+
+#-----------------------------------------------------------------
+
 sub new
 {
     my $class = shift;
@@ -41,14 +72,29 @@ sub new
 	_action => shift,     # Must be defined
 	_name => shift,       # Must be defined
 	_ticker => shift,     # Must be defined
+	_symbol => shift,     # Must be defined
 	_price => shift,
 	_shares => shift,
 	_commision => shift,
 	_amount => shift,
+	_file => shift,
+	_running => shift,
     };
     bless $self, $class;
     return $self;
 }
+
+sub date { $_[0]->{_date}; }
+sub action { $_[0]->{_action}; }
+sub name { $_[0]->{_name}; }
+sub ticker { $_[0]->{_ticker}; }
+sub symbol { $_[0]->{_symbol}; }
+sub price { $_[0]->{_price}; }
+sub shares { $_[0]->{_shares}; }
+sub commision { $_[0]->{_commision}; }
+sub amount { $_[0]->{_amount}; }
+sub file { $_[0]->{_file}; }
+sub running { $_[0]->{_running}; }
 
 #
 # From the docs for Finance::QIF for Type:Invst
@@ -112,12 +158,20 @@ sub newFromQifRecord
     if ( !defined($Actions{$action}) ) {
 	die "Action \"$action\" unknown\n";
     }
+    if (defined $record->{'total'}
+	&& defined $record->{'transaction'}) {
+	if ( $record->{'total'} != $record->{'transaction'} ) {
+	    die "Date: \"\": Transaction != Total\n";
+	}
+	$amount = $record->{'total'};
+    } elsif defined $record->{'transaction'} {
     $amount = $record->{'total'} if defined $record->{'total'};
 
     if ( $action eq 'Cash' ) {
-	$name = $Ticker::gCash;
+	return undef unless defined($amount);
+	$name = $Ticker::kCash;
 	$price = 1.0;
-	$shares = $amount if defined($amount);
+	$shares = $amount;
     } else {
 	if ( !defined($record->{'security'}) ) {
 	    $gDebug && print("Transaction has no security name.\n");
@@ -142,6 +196,7 @@ sub newFromQifRecord
 	$action,
 	$name,
 	$ticker,
+	$ticker->symbol(),
 	$price,
 	$shares,
 	$commision,
@@ -157,12 +212,6 @@ sub ConvertQifDate {
     return $date;
 }
 
-sub ticker
-{
-    my ($self) = @_;
-    return $self->{_ticker};
-}
-
 sub printToStringArray
 {
     my($self, $raS, $prefix) = @_;
@@ -175,17 +224,6 @@ sub printToStringArray
 	    $self->{$k}->printToStringArray($raS, $prefix . '  ');
 	}
     }
-}
-
-sub symbol
-{
-    my ($self) = @_;
-    if (!defined($self->{_ticker})) {
-	my $raString = [];
-	print join("\n", $self->printToStringArray($raString, ''));
-	die('Ticker must be defined.');
-    }
-    return $self->{_ticker}->symbol();
 }
 
 1;
