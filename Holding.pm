@@ -42,4 +42,17 @@ sub printToStringArray
     $self->{_transactions}->printToStringArray($raS, $prefix . '  ');
 }
 
+sub printToCsv
+{
+    my($self, 
+       $raTransCols,   # In: Array of transaction column names to print.
+                       #   If undef, then it will use all scalar fields.
+       $rhNameMap,     # In: Indirect the FieldName through this map.
+                       #   If undef, use the FieldNames directly.
+       $csv,           # In: A CSV object if you want to reuse one.
+       $raS,           # Out: Output is written back to this array. 
+	) = @_;
+
+    $self->{_transactions}->printToCsv($raTransCols, $rhNameMap, $csv, $raS);
+}
 1;

@@ -4,34 +4,17 @@
 # selling an asset.
 
 package Transaction;
+require Exporter;
+@ISA = qw(Exporter);
+@EXPORT_OK = qw(@MstarHeaders %MstarMap);
 
 use Finance::QIF;
+use Text::CSV_XS;
 use Ticker qw($kCash);
+use Util;
 use strict;
 
 my $gDebug = 1;
-
-# Supported quicken action types
-my %Actions = (
-    'Buy' => 1,
-    'BuyX' => 1,
-    'Cash' => 1,
-    'CGLong' => 1,
-    'CGLongX' => 1,
-    'CGShort' => 1,
-    'CGShortX' => 1,
-    'Div' => 1,
-    'DivX' => 1,
-    'MiscExpX' => 1,
-    'ReinvDiv' => 1,
-    'ReinvLg' => 1,
-    'ReinvSh' => 1,
-    'SellX' => 1,
-    'ShrsIn' => 1,
-    'ShrsOut' => 1,
-    'StkSplit' => 1,
-    'Sell' => 1,
-    );
 
 # These are headers in the CSV file that morningstar import
 # understands.  They are in an array so that order is preserved.
@@ -60,6 +43,44 @@ our %MstarMap = (
     'Comm' => '_commision',
     'Amount' => '_amount',
     'Running' => '_running',
+    );
+
+# Supported quicken fields
+my %QifFields = (
+    'account' => 1,
+    'action' => 1,
+    'commission' => 1,
+    'date' => 1,
+    'header' => 1,
+    'memo' => 1,
+    'price' => 1,
+    'quantity' => 1,
+    'security' => 1,
+    'status' => 1,
+    'total' => 1,
+    'transaction' => 1,
+    );
+
+# Supported quicken action types
+my %Actions = (
+    'Buy' => 1,
+    'BuyX' => 1,
+    'Cash' => 1,
+    'CGLong' => 1,
+    'CGLongX' => 1,
+    'CGShort' => 1,
+    'CGShortX' => 1,
+    'Div' => 1,
+    'DivX' => 1,
+    'MiscExpX' => 1,
+    'ReinvDiv' => 1,
+    'ReinvLg' => 1,
+    'ReinvSh' => 1,
+    'SellX' => 1,
+    'ShrsIn' => 1,
+    'ShrsOut' => 1,
+    'StkSplit' => 1,
+    'Sell' => 1,
     );
 
 #-----------------------------------------------------------------
@@ -126,6 +147,9 @@ sub newFromQifRecord
 	$record->{$k} =~ tr/\r\n,//d;
 	$record->{$k} =~ s/\s+$//;
 	$gDebug && print "  $k = $record->{$k}\n";
+	if ( !defined($QifFields{$k}) ) {
+	    die "QIF Field \"$k\" unknown\n";
+	}
     }
 
     if ( $record->{'header'} ne 'Type:Invst' ) {
@@ -150,7 +174,7 @@ sub newFromQifRecord
     my $ticker;
     my $price;
     my $shares;
-    my $commision;
+    my $commission;
     my $amount;
     
     $date = &ConvertQifDate($record->{'date'});
@@ -158,14 +182,20 @@ sub newFromQifRecord
     if ( !defined($Actions{$action}) ) {
 	die "Action \"$action\" unknown\n";
     }
-    if (defined $record->{'total'}
-	&& defined $record->{'transaction'}) {
+    if (defined($record->{'total'}) && defined($record->{'transaction'})) {
 	if ( $record->{'total'} != $record->{'transaction'} ) {
 	    die "Date: \"\": Transaction != Total\n";
 	}
 	$amount = $record->{'total'};
-    } elsif defined $record->{'transaction'} {
-    $amount = $record->{'total'} if defined $record->{'total'};
+    } elsif (defined $record->{'total'}) {
+	$amount = $record->{'total'};
+    } elsif (defined $record->{'transaction'}) {
+	$amount = $record->{'transaction'};
+    } else {
+	# Transaction without some kind of total isn't useful.
+	$gDebug && print("Transaction must have total or transaction.\n");
+	return undef;
+    }
 
     if ( $action eq 'Cash' ) {
 	return undef unless defined($amount);
@@ -188,8 +218,8 @@ sub newFromQifRecord
 
     # Don't create transactions for ticker types marked
     # "Skip".
-    $commision = 0;
-    $commision = $record->{'Comm'} if defined $record->{'Comm'};
+    $commission = 0;
+    $commission = $record->{'commission'} if defined $record->{'commission'};
     
     return Transaction->new(
 	$date,
@@ -199,7 +229,7 @@ sub newFromQifRecord
 	$ticker->symbol(),
 	$price,
 	$shares,
-	$commision,
+	$commission,
 	$amount);
 }
 
@@ -210,6 +240,18 @@ sub ConvertQifDate {
     $date =~ s/\s*(\d+)\/\s*(\d+)' (\d)/$1-$2-200$3/;
     $date =~ s/\s*(\d+)\/\s*(\d+)\/(\d+)/$1-$2-19$3/;
     return $date;
+}
+
+# Returns a ref to an array.
+sub scalarFields
+{
+    my($self) = @_;
+    my $f = [];
+    foreach my $k ( sort keys %{ $self } ) {
+	# Include only fields that are scalar
+	push @{ $f }, $k if (ref($self->{$k}) eq '');
+    }
+    return $f;
 }
 
 sub printToStringArray
@@ -224,6 +266,22 @@ sub printToStringArray
 	    $self->{$k}->printToStringArray($raS, $prefix . '  ');
 	}
     }
+}
+
+sub printToCsv
+{
+    my($self, 
+       $raFieldNames,  # In: Array of column names to print.
+                       #   If undef, then it will use all scalar fields.
+       $rhNameMap,     # In: Indirect the FieldName through this map.
+                       #   If undef, use the FieldNames directly.
+       $csv,           # In: A CSV object if you want to reuse one.
+       $raS,           # Out: Output is written back to this array. 
+	) = @_;
+    
+    $raFieldNames = $self->scalarFields() unless defined $raFieldNames;
+    $csv = Text::CSV_XS->new ({ binary => 1, eol => $/ }) unless defined $csv;
+    Util::printHashToCsv($self, $raFieldNames, $rhNameMap, $csv, $raS);
 }
 
 1;
