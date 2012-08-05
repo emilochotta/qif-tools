@@ -269,6 +269,7 @@ my %Tickers = (
     'Vanguard High-Yield Corporate Fund Admiral Shares' => 'VWEAX',
     'Vanguard Inflation-Protected Securities Fund Admiral Shares' => 'VAIPX',
     'Vanguard Intermediate-Term Investment-Grade Fund Admiral Shares' => 'VFIDX',
+    'Vanguard Intermediate-Term Bond Index Fund Admiral Shares' => 'VBILX',
     'VANGUARD INTL EQTY INDEXFTSE ALL WORLD EX US ETF' => 'VEU',
     'Vanguard Long-Term Treasury Fund Admiral Shares' => 'VUSUX',
     'VANGUARD MEGA CAP 300 INDEX ETF' => 'MGC',
@@ -283,6 +284,7 @@ my %Tickers = (
     'VANGUARD TOTAL INTL STOCK INDEX' => 'VGTSX',
     'Victory Inst Diversified Stock' => 'VIDSX',
     'William Blair International Growth N' => 'WBIGX',
+    'XILINX INC ESPP' => 'XLNX',
     );
 
 my %AssetClass = (
@@ -416,6 +418,10 @@ sub new
     return $self;
 }
 
+sub name { $_[0]->{_name}; }
+sub symbol { $_[0]->{_symbol}; }
+sub skip { $_[0]->{_skip}; }
+
 sub getByName
 {
     my $name = shift;
@@ -425,9 +431,8 @@ sub getByName
 	return $TickersByName->{ $name };
     }
 
-    # Get the skip value.  We don't create transactions
-    # for these Tickers.
-    my $skip = (defined($Skip{$name})) ? $Skip{$name} : 0;
+    # Get the skip value.  Skip most stuff for this ticker.
+    my $skip = (defined($Skip{$name}));
     
     # Get the symbol from the name
     my $symbol;
@@ -437,18 +442,13 @@ sub getByName
 	# Will skip most stuff for this ticker
 	$symbol = $gUnknown;
     } else {
-	print "** Add the following to \%Tickers or \%Skip in Ticker.pm\n";
-	print "    '", $name, "' => '',\n";
-	die "";
+	my $msg = "** Add the following to \%Tickers or "
+	    . "\%Skip in Ticker.pm\n"
+	    . "    '" . $name . "' => '',\n";
+	die $msg;
     }
 
     return Ticker->new($name, $symbol, $skip);
-}
-
-sub symbol
-{
-    my ($self) = @_;
-    return $self->{_symbol};
 }
 
 sub printToStringArray

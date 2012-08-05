@@ -1,4 +1,5 @@
 package AssetCategory;
+use Ticker;
 use strict;
 
 sub new

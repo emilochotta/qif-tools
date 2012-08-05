@@ -21,6 +21,12 @@ sub append
     push @{ $self }, $transaction;
 }
 
+sub appendTransactions
+{
+    my ($self, $transactions) = @_;
+    push @{ $self }, @{ $transactions };
+}
+
 sub printToStringArray
 {
     my($self, $raS, $prefix) = @_;
@@ -30,7 +36,7 @@ sub printToStringArray
     }
 }
 
-sub printToCsv
+sub printToCsvString
 {
     my($self, 
        $raTransCols,   # In: Array of transaction column names to print.
@@ -42,8 +48,38 @@ sub printToCsv
 	) = @_;
     
     foreach my $transaction ( @{ $self } ) {
-	$transaction->printToCsv($raTransCols, $rhNameMap, $csv, $raS);
+	$transaction->printToCsvString($raTransCols, $rhNameMap, $csv, $raS);
     }
+}
+
+sub computeAllFromTransactions
+{
+    my($self,$shares,$price,$estimated,$cost_basis,$gain,
+       $value,$purchases,$my_return,$has_new_trans) = @_;
+
+    $$shares = 0;
+    $$price = 0;
+    $$estimated = 0;
+    $$cost_basis = 0;
+    $$gain = 0;
+    $$value = 0;
+    $$purchases = 0;
+    $$my_return = 0;
+    
+    foreach my $transaction ( @{ $self } ) {
+	$transaction->computeAllFromTransactions(
+	    $shares,
+	    $price,
+	    $estimated,
+	    $cost_basis,
+	    $gain,
+	    $value,
+	    $purchases,
+	    $my_return,
+	    );
+    }
+
+    $$has_new_trans = 0;
 }
 
 1;

@@ -120,6 +120,7 @@ sub test_newFromQif : Test(34) {
     
     is_deeply($t3->scalarFields, 
 	      [ 
+		'_account', 
 		'_action', 
 		'_amount', 
 		'_commision', 
@@ -133,8 +134,8 @@ sub test_newFromQif : Test(34) {
 	      'Scalar Fields');
 
      my $raS = [];
-     $t3->printToCsv(undef, undef, undef, $raS);
-     is($raS->[0], "ReinvDiv,510,10,12-31-2010,,\"VANGUARD MID CAP ETF\",5,,100,VO\n",
+     $t3->printToCsvString(undef, undef, undef, $raS);
+     is($raS->[0], ",ReinvDiv,510,10,12-31-2010,,\"VANGUARD MID CAP ETF\",5,,100,VO\n",
         'Formated as CSV');
 
     # Tickers should be reused.

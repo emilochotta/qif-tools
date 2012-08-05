@@ -6,15 +6,20 @@
 package Transaction;
 require Exporter;
 @ISA = qw(Exporter);
-@EXPORT_OK = qw(@MstarHeaders %MstarMap);
+@EXPORT_OK = qw(@MstarHeaders %MstarMap $gAccount);
 
 use Finance::QIF;
 use Text::CSV_XS;
+use Account;
 use Ticker qw($kCash);
 use Util;
 use strict;
 
-my $gDebug = 1;
+#-----------------------------------------------------------------
+# Configuration
+#-----------------------------------------------------------------
+
+my $gDebug = 0;
 
 # These are headers in the CSV file that morningstar import
 # understands.  They are in an array so that order is preserved.
@@ -49,20 +54,26 @@ our %MstarMap = (
 my %QifFields = (
     'account' => 1,
     'action' => 1,
+    'amount' => 1,
+    'category' => 1,
     'commission' => 1,
     'date' => 1,
     'header' => 1,
     'memo' => 1,
+    'number' => 1,
+    'payee' => 1,
     'price' => 1,
     'quantity' => 1,
     'security' => 1,
+    'splits' => 1,
     'status' => 1,
+    'text' => 1,
     'total' => 1,
     'transaction' => 1,
     );
 
-# Supported quicken action types
-my %Actions = (
+# Supported quicken action types.
+our %Actions = (
     'Buy' => 1,
     'BuyX' => 1,
     'Cash' => 1,
@@ -70,8 +81,15 @@ my %Actions = (
     'CGLongX' => 1,
     'CGShort' => 1,
     'CGShortX' => 1,
+    'ContribX' => 1,
+    'CvrShrt' => 1,
     'Div' => 1,
     'DivX' => 1,
+    'Exercise' => 1,
+    'Expire' => 1,
+    'Grant' => 1,
+    'IntInc' => 1,
+    'MargInt' => 1,
     'MiscExpX' => 1,
     'ReinvDiv' => 1,
     'ReinvLg' => 1,
@@ -79,10 +97,21 @@ my %Actions = (
     'SellX' => 1,
     'ShrsIn' => 1,
     'ShrsOut' => 1,
+    'ShtSell' => 1,
     'StkSplit' => 1,
     'Sell' => 1,
+    'Vest' => 1,
+    'WithdrwX' => 1,
+    'XIn' => 1,
+    'XOut' => 1,
     );
 
+#-----------------------------------------------------------------
+# Global Variables with File Scope
+#-----------------------------------------------------------------
+
+#-----------------------------------------------------------------
+# Methods
 #-----------------------------------------------------------------
 
 sub new
@@ -94,6 +123,7 @@ sub new
 	_name => shift,       # Must be defined
 	_ticker => shift,     # Must be defined
 	_symbol => shift,     # Must be defined
+	_account => shift,    # Account name
 	_price => shift,
 	_shares => shift,
 	_commision => shift,
@@ -110,12 +140,15 @@ sub action { $_[0]->{_action}; }
 sub name { $_[0]->{_name}; }
 sub ticker { $_[0]->{_ticker}; }
 sub symbol { $_[0]->{_symbol}; }
+sub account { $_[0]->{_account}; }
 sub price { $_[0]->{_price}; }
 sub shares { $_[0]->{_shares}; }
 sub commision { $_[0]->{_commision}; }
 sub amount { $_[0]->{_amount}; }
 sub file { $_[0]->{_file}; }
 sub running { $_[0]->{_running}; }
+
+sub setAccount { $_[0]->{_account} = $_[1]; }
 
 #
 # From the docs for Finance::QIF for Type:Invst
@@ -172,6 +205,7 @@ sub newFromQifRecord
     my $action;
     my $name;
     my $ticker;
+    my $account;
     my $price;
     my $shares;
     my $commission;
@@ -191,10 +225,12 @@ sub newFromQifRecord
 	$amount = $record->{'total'};
     } elsif (defined $record->{'transaction'}) {
 	$amount = $record->{'transaction'};
-    } else {
-	# Transaction without some kind of total isn't useful.
-	$gDebug && print("Transaction must have total or transaction.\n");
-	return undef;
+
+# Removed this check because it skipped shrs added transactions
+#     } else {
+# 	# Transaction without some kind of total isn't useful.
+# 	$gDebug && print("Transaction must have total or transaction.\n");
+# 	return undef;
     }
 
     if ( $action eq 'Cash' ) {
@@ -214,12 +250,15 @@ sub newFromQifRecord
 	    defined $record->{'quantity'};
     }
     $gDebug && print("Name \"$name\".\n");
+
+    # An unknown name will raise an exception, which is what we want.
+    # A ticker marked as "skip" will still be processed.
     $ticker = Ticker::getByName($name);
 
-    # Don't create transactions for ticker types marked
-    # "Skip".
     $commission = 0;
     $commission = $record->{'commission'} if defined $record->{'commission'};
+    
+    $account = $record->{'account'} if defined $record->{'account'};
     
     return Transaction->new(
 	$date,
@@ -227,13 +266,15 @@ sub newFromQifRecord
 	$name,
 	$ticker,
 	$ticker->symbol(),
+	$account,
 	$price,
 	$shares,
 	$commission,
 	$amount);
 }
 
-sub ConvertQifDate {
+sub ConvertQifDate
+{
     my $date = shift;
     $date =~ tr/\"\r\n//d;
     $date =~ s/\s*(\d+)\/\s*(\d+)'1(\d)/$1-$2-201$3/;
@@ -268,7 +309,15 @@ sub printToStringArray
     }
 }
 
-sub printToCsv
+sub print
+{
+    my($self) = @_;
+    my $raS = [];
+    $self->printToCsvString(undef, undef, undef, $raS);
+    print join("\n", @{$raS}), "\n";
+}
+
+sub printToCsvString
 {
     my($self, 
        $raFieldNames,  # In: Array of column names to print.
@@ -282,6 +331,63 @@ sub printToCsv
     $raFieldNames = $self->scalarFields() unless defined $raFieldNames;
     $csv = Text::CSV_XS->new ({ binary => 1, eol => $/ }) unless defined $csv;
     Util::printHashToCsv($self, $raFieldNames, $rhNameMap, $csv, $raS);
+}
+
+sub computeAllFromTransactions
+{
+    my($self,$shares,$price,$estimated,$cost_basis,$gain,
+       $value,$purchases,$my_return) = @_;
+
+    my $action = $self->{_action};
+
+    if ($action eq 'Buy') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'BuyX') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'Cash') {
+    } elsif ($action eq 'CGLong') {
+    } elsif ($action eq 'CGLongX') {
+    } elsif ($action eq 'CGShort') {
+    } elsif ($action eq 'CGShortX') {
+    } elsif ($action eq 'ContribX') {
+    } elsif ($action eq 'CvrShrt') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'Div') {
+    } elsif ($action eq 'DivX') {
+    } elsif ($action eq 'Exercise') {
+    } elsif ($action eq 'Expire') {
+    } elsif ($action eq 'Grant') {
+    } elsif ($action eq 'IntInc') {
+    } elsif ($action eq 'MargInt') {
+    } elsif ($action eq 'MiscExpX') {
+    } elsif ($action eq 'ReinvDiv') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'ReinvLg') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'ReinvSh') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'SellX') {
+	$$shares -= $self->{_shares};
+    } elsif ($action eq 'ShrsIn') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'ShrsOut') {
+	$$shares -= $self->{_shares};
+    } elsif ($action eq 'ShtSell') {
+	$$shares -= $self->{_shares};
+    } elsif ($action eq 'StkSplit') {
+	die "Action \"$action\" NOT SUPPORTED\n";
+    } elsif ($action eq 'Sell') {
+	$$shares -= $self->{_shares};
+    } elsif ($action eq 'Vest') {
+    } elsif ($action eq 'WithdrwX') {
+    } elsif ($action eq 'XIn') {
+	$$shares += $self->{_shares};
+    } elsif ($action eq 'XOut') {
+	$$shares -= $self->{_shares};
+    } else {
+	die "Action \"$action\" unknown\n";
+    }
+    $gDebug && print("Action \"$action\", Shares \"$$shares\".\n");
 }
 
 1;

@@ -960,7 +960,8 @@ sub Read_Qif {
 		} elsif ( $action eq 'split' ) {
 		    if (defined $rhQif->{$ticker}) {
 			my $lastRow = scalar @{$rhQif->{$ticker}} - 1;
-			$record->{'Price'} = $rhQif->{$ticker}->[$lastRow]->{'Price'};
+			$record->{'Price'} =
+			    $rhQif->{$ticker}->[$lastRow]->{'Price'};
 		    }
 		    $record->{'Amount'} = 0;
 		    $record->{'Action'} = $action;

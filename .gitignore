@@ -3,6 +3,8 @@
 *.csv
 quicken-portfolio.txt
 files.txt
+out.txt
+qif2mstar_out.txt
 out
 quicken
 

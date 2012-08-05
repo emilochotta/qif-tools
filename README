@@ -4,10 +4,17 @@ for uploading to morningstar.
 
 Classes and their relationships:
 
+Account -- A collection of holdings.
+
+AssetAllocation
+
+AssetCategory
+
+Holding -- Shares of a Ticker.  End result of multiple transactions.
+
+Portfolio -- A collection of accounts.
+
 Ticker -- A stock or other asset that *could* be owned.
 
 Transaction -- A buy, sell, or other action of a Ticker or cash.
 
-Holding -- Shares of a Ticker.  End result of multiple transactions.
-
-Account -- A collection of holdings.
