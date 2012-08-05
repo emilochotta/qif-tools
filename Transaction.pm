@@ -10,7 +10,6 @@ require Exporter;
 
 use Finance::QIF;
 use Text::CSV_XS;
-use Account;
 use Ticker qw($kCash);
 use Util;
 use strict;
@@ -133,6 +132,18 @@ sub new
     };
     bless $self, $class;
     return $self;
+}
+
+sub newDeepCopy
+{
+    my ($self) = @_;
+    my $copy = Transaction->new();
+    foreach my $k ( sort keys %{ $self } ) {
+	# Don't use the deepcopy here because tickers are read only
+	# shared data, and that's the only object data member.
+	$copy->{$k} = $self->{$k};
+    }
+    return $copy;
 }
 
 sub date { $_[0]->{_date}; }

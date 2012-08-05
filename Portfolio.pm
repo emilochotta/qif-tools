@@ -217,6 +217,13 @@ sub newPortfoliosFromAccounts {
 	    # Add the holdings from this account to the holdings for
 	    # this portfolio.
 	    foreach my $symbol (keys %{ $account->holdings() }) {
+		my $deb = 0;
+		$deb = 1 if ($symbol eq 'DJP');
+		if ($deb) {
+		    printf("Add Account %s Holding of %s to Portfolio %s\n",
+			   $account_name, $symbol, $portfolio_name);
+		    $account->holding($symbol)->print();
+		    }
 		if (defined($p->{_holdings}) &&
 		    defined($p->{_holdings}->{$symbol})) {
 
@@ -224,11 +231,25 @@ sub newPortfoliosFromAccounts {
 		    # we append the transactions from this account
 		    # to the transactions for that other account.
 		    my $holding = $p->holding($symbol);
+		    if ($deb) {
+			print "** Merge With **\n";
+			printf("Portfolio %s Holding of %s\n",
+			       $portfolio_name, $symbol);
+			$holding->print();
+		    }
 		    $holding->appendHoldingTransactions(
 			$account->holding($symbol));
 		} else {
+		    if ($deb) {
+			print "** Copy **\n";
+		    }
 		    $p->{_holdings}->{$symbol} =
-			$account->holdings()->{$symbol};
+			$account->holding($symbol)->newDeepCopy();
+		}
+		if ($deb) {
+		    printf("After Adding Portfolio %s Holding of %s:\n",
+			   $portfolio_name, $symbol);
+		    $p->holding($symbol)->print();
 		}
 	    }
 	}

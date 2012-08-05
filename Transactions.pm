@@ -15,6 +15,16 @@ sub new
     return $self;
 }
 
+sub newDeepCopy
+{
+    my ($self) = @_;
+    my $copy = Transactions->new();
+    foreach my $k ( @{ $self } ) {
+	$copy->append($k->newDeepCopy());
+    }
+    return $copy;
+}
+
 sub append
 {
     my ($self, $transaction) = @_;

@@ -56,6 +56,25 @@ sub new
     return $self;
 }
 
+sub newDeepCopy
+{
+    my ($self) = @_;
+    return Holding->new(
+	$self->ticker(),
+	$self->inAccount(),
+	$self->transactions()->newDeepCopy(),
+	$self->shares(),
+	$self->price(),
+	$self->estimated(),
+	$self->cost_basis(),
+	$self->gain(),
+	$self->value(),
+	$self->purchases(),
+	$self->myReturn(),
+	$self->hasNewTrans(),
+    );
+}
+
 # Accessors
 sub ticker { $_[0]->{_ticker}; }
 sub symbol { $_[0]->{_ticker}->symbol(); }
