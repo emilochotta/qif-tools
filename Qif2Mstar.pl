@@ -3,8 +3,12 @@
 # Re-written version of qif2morningstar.pl
 
 use Portfolio;
+use AssetAllocation;
 use Account;
 use Holding;
+
+use strict;
+use warnings;
 
 # --------------------------------------------------------
 # Configuration
@@ -19,6 +23,7 @@ use Holding;
 # e.	Open in excel
 # f.	Save as quicken-portfolio.csv
 my $gSummaryReportFilename = 'quicken-portfolio.csv';
+my $gSummaryName = 'q_summary';
 
 # Name of a director with quicken transaction files (1 or more).  
 my $gQifDir = 'quicken';
@@ -32,9 +37,9 @@ exit &main();
 sub main {
 
     print "*************************************************************\n";
-    print "Reading portfolio from $quickenPortfolio\n";
+    print "Reading portfolio from $gSummaryReportFilename\n";
     my $q_summary_portfolio = Portfolio::newFromQuickenSummaryReport(
-	'q_summary', $gSummaryReportFilename );
+	$gSummaryName, $gSummaryReportFilename );
 
     print "*************************************************************\n";
     print "Reading QIF Account files\n";
@@ -56,13 +61,44 @@ sub main {
     $q_summary_portfolio->Compare($rhPortfolios->{'all'}, \@lines);
     print join("\n", @lines), "\n";
 
-#     $rh_portfolio_definitions =
-# 	&ReadPortfolioDefinitions($portfolio_definition_file);
-#     foreach $p ( keys $rh_porfolio_definitions ) {
-# 	$rh_portfolios->{$p} = Portfolio::new();
-#     }
+    #
+    # TODO: Transport CombineTransactions from the old version
+    # so that there aren't multiple events on the same day.
+    #
+    # TODO: Generate multiple spreadsheets per portfolio based
+    # on asset classes within the portfolio.
+    foreach my $p_name (sort keys %{$rhPortfolios}) {
+	next if $p_name eq $gSummaryName;
+	
+	my $portfolio = $rhPortfolios->{$p_name};
+	my $fname = sprintf("out/%s.csv", $portfolio->name());
+	$portfolio->printToMstarCsvFile($fname);
+
+	# Only the summary portfolio will have usable prices.
+	$portfolio->copyPrices($q_summary_portfolio);
+    }
+
+    # 
+    # TODO: Bring in portfolio definitions and add support for
+    # rebalancing portfolios.
+    &Read_Asset_Allocation_Csv_Per_Portfolio( $rhPortfolios );
+    foreach my $portfolioName ( keys %{ $rhPortfolios } ) {
+	$rhPortfolios->{$portfolioName}->printRebalanceCsvFile('out');
+    }
+
     return 0;
 }
+
+sub Read_Asset_Allocation_Csv_Per_Portfolio {
+    my ($rhPortfolios) = @_;
+
+    foreach my $portfolioName ( keys %{ $rhPortfolios } ) {
+	my $portfolio = $rhPortfolios->{$portfolioName};
+	$portfolio->SetAssetAllocation(
+	    AssetAllocation::NewFromCsv($portfolioName));
+    }
+}
+
 
     
 

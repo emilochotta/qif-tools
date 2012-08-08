@@ -91,6 +91,12 @@ sub myReturn { $_[0]->{_myReturn}; }
 sub hasNewTrans { $_[0]->{_hasNewTrans}; }
 
 sub setInAccount { $_[0]->{_inAccount} = $_[1]; }
+sub setPrice
+{
+    my($self, $price) = @_;
+    $self->{_price} = $price;
+    $self->computeAllFromTransactions();
+}
 
 sub appendTransaction
 {
@@ -114,6 +120,12 @@ sub appendHoldingTransactions
     $self->computeAllFromTransactions();
 }
 
+sub copyPrice
+{
+    my($self, $other) = @_;
+    $self->setPrice($other->price());
+}
+
 sub printToStringArray
 {
     my($self, $raS, $prefix, $print_transactions) = @_;
@@ -130,32 +142,40 @@ sub printToStringArray
 sub printToCsvString
 {
     my($self, 
+       $raS,           # Out: Output is written back to this array. 
        $raTransCols,   # In: Array of transaction column names to print.
                        #   If undef, then it will use all scalar fields.
        $rhNameMap,     # In: Indirect the FieldName through this map.
                        #   If undef, use the FieldNames directly.
        $csv,           # In: A CSV object if you want to reuse one.
-       $raS,           # Out: Output is written back to this array. 
+       $isMstar,       # In: Apply morningstar rules.
 	) = @_;
 
-    $self->{_transactions}->printToCsvString($raTransCols, $rhNameMap, $csv, $raS);
+    $self->{_transactions}->printToCsvString($raS, $raTransCols, $rhNameMap,
+					     $csv, $isMstar);
 }
 
 sub print
 {
     my($self) = @_;
     my $raS = [];
-    $self->printToCsvString(undef, undef, undef, $raS);
+    $self->printToCsvString($raS);
     print join("\n", @{$raS}), "\n";
 }
 
 sub printToCsvFile
 {
-    my($self, $fname) = @_;
+    my($self,
+       $fname,
+       $raTransCols,   # In: Array of transaction column names to print.
+                       #   If undef, then it will use all scalar fields.
+       $rhNameMap,     # In: Indirect the FieldName through this map.
+                       #   If undef, use the FieldNames directly.
+       ) = @_;
     my @S;
     open my $io, ">", $fname or die "$fname: $!";
     print "  Writing $fname\n";
-    $self->printToCsvString(undef, undef, undef, \@S);
+    $self->printToCsvString(\@S);
     print $io @S;
     close $io;
 }
@@ -173,6 +193,9 @@ sub computeAllFromTransactions
 	\$self->{_purchases},
 	\$self->{_myReturn},
 	\$self->{_hasNewTrans}
-    );	
+    );
+    $self->{_value} = $self->{_shares} * $self->{_price};
+    printf("Value of %s is %f * %f = %f\n", $self->symbol(),
+	   $self->price(), $self->shares(), $self->value());
 }
 1;

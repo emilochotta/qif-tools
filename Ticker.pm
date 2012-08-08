@@ -254,6 +254,7 @@ my %Tickers = (
     'T. Rowe Price Instl Large Cap Value' => 'TILCX',
     'UMB SCOUT WORLDWIDE FUND' => 'UMBWX',
     'Vanguard 500 Index Fund Signal Shares' => 'VIFSX',
+    'Vanguard Wellington Adm' => 'VWENX',
     'Vanguard California Intermediate-Term Tax-Exempt Fund Investor Shares' => 'VCAIX',
     'Vanguard Convertible Securities Fund' => 'VCVSX',
     'VANGUARD DIVIDEND APPRECIATION ETF' => 'VIG',
@@ -270,6 +271,7 @@ my %Tickers = (
     'Vanguard Inflation-Protected Securities Fund Admiral Shares' => 'VAIPX',
     'Vanguard Intermediate-Term Investment-Grade Fund Admiral Shares' => 'VFIDX',
     'Vanguard Intermediate-Term Bond Index Fund Admiral Shares' => 'VBILX',
+    'Vanguard International Equity Index Funds' => 'VNQI',
     'VANGUARD INTL EQTY INDEXFTSE ALL WORLD EX US ETF' => 'VEU',
     'Vanguard Long-Term Treasury Fund Admiral Shares' => 'VUSUX',
     'VANGUARD MEGA CAP 300 INDEX ETF' => 'MGC',
@@ -282,6 +284,7 @@ my %Tickers = (
     'VANGUARD SHORT TERM BOND ETF' => 'BSV',
     'VANGUARD SMALL-CAP VIPERS' => 'VB',
     'VANGUARD TOTAL INTL STOCK INDEX' => 'VGTSX',
+    'Vanguard Wellesley Income Adm' => 'VWIAX',
     'Victory Inst Diversified Stock' => 'VIDSX',
     'William Blair International Growth N' => 'WBIGX',
     'XILINX INC ESPP' => 'XLNX',
@@ -388,10 +391,10 @@ my %AssetClass = (
 my $TickersBySymbol = {};
 my $TickersByName = {};
 
-my %TickerToName = ();
+my %SymbolToName = ();
 
 foreach my $k ( sort keys %Tickers ) {
-    $TickerToName{$Tickers{$k}} = $k;
+    $SymbolToName{$Tickers{$k}} = $k;
 }
 
 sub new
@@ -449,6 +452,17 @@ sub getByName
     }
 
     return Ticker->new($name, $symbol, $skip);
+}
+
+sub getBySymbol
+{
+    my $symbol = shift;
+
+    # Get the Name for this symbol
+    if ( !defined($SymbolToName{$symbol})) {
+	die "Add Symbol \"$symbol\" to Ticker.pm";
+    }
+    return Ticker::getByName($SymbolToName{$symbol});
 }
 
 sub printToStringArray

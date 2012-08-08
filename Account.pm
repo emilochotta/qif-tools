@@ -133,19 +133,20 @@ sub printToStringArray
 sub printToCsvString
 {
     my($self, 
-       $raTransCols,   # In: Array of transaction column names to print.
+       $raS,           # Out: Output is written back to this array. 
+       $raFieldNames,  # In: Array of transaction column names to print.
                        #   If undef, then it will use all scalar fields.
        $rhNameMap,     # In: Indirect the FieldName through this map.
                        #   If undef, use the FieldNames directly.
        $csv,           # In: A CSV object if you want to reuse one.
-       $raS,           # Out: Output is written back to this array. 
+       $isMstar,       # In: Apply morningstar rules.
 	) = @_;
 
     $csv = Text::CSV_XS->new ({ binary => 1, eol => $/ }) unless defined $csv;
-    Util::printCsv($raTransCols, $csv, $raS);
-    foreach my $symbol ( sort keys %{ $self->{_holdings} } ) {
+    Util::printCsv($raFieldNames, $csv, $raS);
+    foreach my $symbol (sort keys %{ $self->{_holdings} }) {
 	$self->{_holdings}->{$symbol}->printToCsvString(
-	    $raTransCols, $rhNameMap, $csv, $raS);
+	    $raS, $raFieldNames, $rhNameMap, $csv, $isMstar);
     }
 }
     

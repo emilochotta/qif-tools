@@ -24,7 +24,7 @@ my $gDebug = 0;
 # understands.  They are in an array so that order is preserved.
 our @MstarHeaders = (
     'Ticker',
-    'File',
+    'Account',
     'Date',
     'Action',
     'Name',
@@ -32,15 +32,14 @@ our @MstarHeaders = (
     'Shares/Ratio',
     'Comm',
     'Amount',
-    'Running'
     );
 
 # Map from morningstar fields to Transaction object fields.
 our %MstarMap = (
     'Ticker' => '_symbol',
-    'File' => '_file',
+    'Account' => '_account',
     'Date' => '_date',
-    'Action' => '_action',
+    'Action' => '_mAction',
     'Name' => '_name',
     'Price' => '_price',
     'Shares/Ratio' => '_shares',
@@ -71,38 +70,39 @@ my %QifFields = (
     'transaction' => 1,
     );
 
-# Supported quicken action types.
+# Supported quicken action types.  Map also shows equivalent
+# morningstar actions.
 our %Actions = (
-    'Buy' => 1,
-    'BuyX' => 1,
-    'Cash' => 1,
-    'CGLong' => 1,
-    'CGLongX' => 1,
-    'CGShort' => 1,
-    'CGShortX' => 1,
-    'ContribX' => 1,
-    'CvrShrt' => 1,
-    'Div' => 1,
-    'DivX' => 1,
-    'Exercise' => 1,
-    'Expire' => 1,
-    'Grant' => 1,
-    'IntInc' => 1,
-    'MargInt' => 1,
-    'MiscExpX' => 1,
-    'ReinvDiv' => 1,
-    'ReinvLg' => 1,
-    'ReinvSh' => 1,
-    'SellX' => 1,
-    'ShrsIn' => 1,
-    'ShrsOut' => 1,
-    'ShtSell' => 1,
-    'StkSplit' => 1,
-    'Sell' => 1,
-    'Vest' => 1,
-    'WithdrwX' => 1,
-    'XIn' => 1,
-    'XOut' => 1,
+    'Buy' => 'Buy',
+    'BuyX' => 'Buy',
+    'Cash' => '',
+    'CGLong' => 'CGLong',
+    'CGLongX' => 'CGLongX',
+    'CGShort' => 'CGShort',
+    'CGShortX' => 'CGShortX',
+    'ContribX' => '',
+    'CvrShrt' => 'CvrShrt',
+    'Div' => 'Div',
+    'DivX' => 'Div',
+    'Exercise' => 'Exercise',
+    'Expire' => '',
+    'Grant' => '',
+    'IntInc' => 'IntInc',
+    'MargInt' => 'MargInt',
+    'MiscExpX' => 'MiscExpX',
+    'ReinvDiv' => 'ReinvDiv',
+    'ReinvLg' => 'ReinvLg',
+    'ReinvSh' => 'ReinvSh',
+    'SellX' => 'Sell',
+    'ShrsIn' => 'ShrsIn',
+    'ShrsOut' => 'ShrsOut',
+    'ShtSell' => 'ShtSell',
+    'StkSplit' => 'StkSplit',
+    'Sell' => 'Sell',
+    'Vest' => '',
+    'WithdrwX' => '',
+    'XIn' => 'XIn',
+    'XOut' => 'XOut',
     );
 
 #-----------------------------------------------------------------
@@ -127,6 +127,7 @@ sub new
 	_shares => shift,
 	_commision => shift,
 	_amount => shift,
+	_mAction => shift,    # Morningstar equivalent action
 	_file => shift,
 	_running => shift,
     };
@@ -158,6 +159,7 @@ sub commision { $_[0]->{_commision}; }
 sub amount { $_[0]->{_amount}; }
 sub file { $_[0]->{_file}; }
 sub running { $_[0]->{_running}; }
+sub mAction { $_[0]->{_mAction}; }
 
 sub setAccount { $_[0]->{_account} = $_[1]; }
 
@@ -221,12 +223,14 @@ sub newFromQifRecord
     my $shares;
     my $commission;
     my $amount;
+    my $mAction;
     
     $date = &ConvertQifDate($record->{'date'});
     $action = $record->{'action'};
     if ( !defined($Actions{$action}) ) {
 	die "Action \"$action\" unknown\n";
     }
+    $mAction = $Actions{$action};
     if (defined($record->{'total'}) && defined($record->{'transaction'})) {
 	if ( $record->{'total'} != $record->{'transaction'} ) {
 	    die "Date: \"\": Transaction != Total\n";
@@ -281,7 +285,8 @@ sub newFromQifRecord
 	$price,
 	$shares,
 	$commission,
-	$amount);
+	$amount,
+	$mAction);
 }
 
 sub ConvertQifDate
@@ -324,24 +329,30 @@ sub print
 {
     my($self) = @_;
     my $raS = [];
-    $self->printToCsvString(undef, undef, undef, $raS);
+    $self->printToCsvString($raS);
     print join("\n", @{$raS}), "\n";
 }
 
 sub printToCsvString
 {
     my($self, 
+       $raS,           # Out: Output is written back to this array. 
        $raFieldNames,  # In: Array of column names to print.
                        #   If undef, then it will use all scalar fields.
        $rhNameMap,     # In: Indirect the FieldName through this map.
                        #   If undef, use the FieldNames directly.
        $csv,           # In: A CSV object if you want to reuse one.
-       $raS,           # Out: Output is written back to this array. 
+       $isMstar,       # In: Apply morningstar rules.
 	) = @_;
-    
-    $raFieldNames = $self->scalarFields() unless defined $raFieldNames;
-    $csv = Text::CSV_XS->new ({ binary => 1, eol => $/ }) unless defined $csv;
-    Util::printHashToCsv($self, $raFieldNames, $rhNameMap, $csv, $raS);
+
+    my $skip = $self->ticker()->skip()
+	|| ($isMstar && $self->shares() == 0)
+	|| ($isMstar && $self->mAction() eq '');
+    if (!$skip) {
+	$raFieldNames = $self->scalarFields() unless defined $raFieldNames;
+	$csv = Text::CSV_XS->new ({ binary => 1, eol => $/ }) unless defined $csv;
+	Util::printHashToCsv($self, $raFieldNames, $rhNameMap, $csv, $raS);
+    }
 }
 
 sub computeAllFromTransactions

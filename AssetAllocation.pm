@@ -1,22 +1,52 @@
 package AssetAllocation;
 use AssetCategory;
+use Ticker;
 use Text::CSV_XS;
 use strict;
+
+#-----------------------------------------------------------------
+# Configuration
+#-----------------------------------------------------------------
+
+my $gDebug = 1;
+
+# Used as a prefix on filenames.  
+my $gAssetAllocationPrefix = 'asset-allocation-';
+
+#-----------------------------------------------------------------
+# Methods
+#-----------------------------------------------------------------
 
 sub new
 {
     my $class = shift;
-    my $self = []; # List of AssetCategory
+    my $self = {
+	_name => shift,       # Must be defined.
+	_categories => shift, # Hash of AssetCategory by category name.
+	_symbols => shift,    # Hash by AssetCategory ticker symbol.
+    };
+    !defined($self->{_categories}) && ($self->{_categories} = {});
+    !defined($self->{_symbols}) && ($self->{_symbols} = {});
     bless $self, $class;
     return $self;
 }
 
-sub Read_From_Csv {
-    my ($self, $fname, $rhTickers) = @_;
-	
-#    print "Try to read $fname\n";
+sub name { $_[0]->{_name}; }
+sub categories { $_[0]->{_categories}; }
+sub category { $_[0]->{_categories}->{$_[1]}; }
+sub symbols { $_[0]->{_symbols}; }
+sub symbol { $_[0]->{_symbol}->{$_[1]}; }
+
+sub NewFromCsv {
+    my ($name) = @_;
+
+    my $fname = $gAssetAllocationPrefix . $name . ".csv";
+
+    $gDebug && print "Try to read $fname\n";
     my $csv = Text::CSV_XS->new ({ binary => 1, eol => $/ });
     if ( open my $io, "<", $fname ) {
+	my $aa = AssetAllocation->new($name);
+	
 	# Make sure file matches expected column headers
 	my $header = $csv->getline ($io);
 	if ( $header->[0] ne "Level 1"
@@ -45,16 +75,31 @@ sub Read_From_Csv {
 	    }
 	    my $allocation = $row->[8];
 	    $allocation =~ tr/%//d;
-# 	    printf( "Category \"%s\" is %f percent:\n",
-# 		    $category, $allocation);
-	    my $raTickers = [ split(/,/, $row->[9]) ];  # comma separated list
-# 	    $rhAssetAllocations->{$portfolio}->{'tickers'}->{$category} = $raTickers;
-# 	    foreach my $ticker ( @{ $raTickers } ) {
-# 		$rhAssetAllocations->{$portfolio}->{'categories'}->{$ticker} = $category;
-# #		printf( "Ticker \"%s\" is \"%s\" %.2f\n", $ticker, $category, $allocation);
-# 	    }
+ 	    $gDebug && printf( "Category \"%s\" is %f percent:\n",
+			       $category, $allocation);
+	    # comma separated list
+	    my $raTickerSymbols = [ split(/,/, $row->[9]) ];  
+
+	    # Share a single object.  These are essentially read-only.
+	    my $assetCategory = AssetCategory->new(
+		$category,
+		$allocation,
+		$raTickerSymbols,
+		);
+
+ 	    foreach my $symbol (@{ $raTickerSymbols }) {
+		# Make sure we actually have Ticker info for each symbol.
+ 		my $ticker = Ticker::getBySymbol($symbol);
+
+		$aa->{_symbols}->{$symbol} = $assetCategory;
+		$gDebug && printf( "Symbol \"%s\" is \"%s\" %.2f\n",
+				   $symbol, $category, $allocation);
+	    }
+	    
+	    $aa->{_categories}->{$category} = $assetCategory;
  	}
 	close $io;
+	return $aa;
     } else {
 	print "Skipping $fname: $!\n";
 	return;

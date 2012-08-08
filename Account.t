@@ -20,7 +20,7 @@ sub test_new : Test(2) {
 };
 
 # Test reading an account from a QIF file
-sub test_from_qif : Test(11) {
+sub test_from_qif : Test(14) {
     my $a = Account::newFromQif('account', 'account.qif');
     ok(defined($a), 'Account object was created');
     ok($a->isa('Account'), 'Account object isa Account');
@@ -39,13 +39,18 @@ sub test_from_qif : Test(11) {
     $a->printToStringArray($raStrings,
 			   '',  # Prefix
 			   1);  # Print Transactions
-    is(@$raStrings, 113, 'Returned expected number of strings');
-    # print join("\n", @$raStrings);
+    is(@$raStrings, 119, 'Returned expected number of strings');
+    is($raStrings->[0], 'Account: "account"', 'Printed');
+#    print join("\n", @$raStrings);
     my $raCsv = [];
-    $a->printToCsvString(\@Transaction::MstarHeaders, \%Transaction::MstarMap,
-		   undef, $raCsv);
-    # print join("\n", @$raCsv);
-    is(@$raCsv, 7, 'Returned expected number of CSV');
+    $a->printToCsvString($raCsv, \@Transaction::MstarHeaders,
+			 \%Transaction::MstarMap, undef, 1);
+#    print join("\n", @$raCsv);
+    is(@$raCsv, 6, 'Returned expected number of CSV');
+    is($raCsv->[0], "Ticker,Account,Date,Action,Name,Price,Shares/Ratio,Comm,Amount\n",
+       'Formated as Morningstar CSV');
+    is($raCsv->[1], "GLD,account,1-12-2011,Buy,\"SPDR GOLD TRUST GOLD SHARES\",134.70,95,2.00,12798.50\n",
+       'Formated as Morningstar CSV');
 };
 
 Test::Class->runtests;

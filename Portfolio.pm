@@ -6,11 +6,14 @@ package Portfolio;
 
 use Account;
 use AssetAllocation;
+use AssetCategory;
 use Holding;
 use Ticker;
 use Transaction;
 use Transactions;
 use Text::CSV_XS;
+use Time::Format qw(%time time_format);
+use Util;
 use strict;
 
 #-----------------------------------------------------------------
@@ -109,6 +112,8 @@ sub holdings { $_[0]->{_holdings}; }
 sub holding { $_[0]->{_holdings}->{$_[1]}; }
 sub accounts { $_[0]->{_accounts}; }
 
+sub SetAssetAllocation { $_[0]->{_assetAllocation} = $_[1]; }
+
 sub newOrGetByName
 {
     my ($name) = @_;
@@ -180,8 +185,9 @@ sub newFromQuickenSummaryReport
 
 	    $portfolio->{_holdings}->{$ticker->symbol()} = $holding;
 	    
-	    $gDebug && printf( "Found %f shares of \"%s\" at %.2f\n",
-			       $shares, $name, $price );
+	    $gDebug && printf("Found %f shares of \"%s\" at %.2f\n",
+			      $holding->shares(), $name,
+			      $holding->price());
 	}
     }
     close $io;
@@ -263,9 +269,11 @@ sub Compare {
     my @my_symbols;
     my $width = 6;
     foreach my $symbol (sort keys %{$self->holdings()}) {
-	push @my_symbols, $symbol;
-	if (length $symbol > $width) {
-	    $width = length $symbol;
+	if (!$self->holding($symbol)->ticker()->skip()) {
+	    push @my_symbols, $symbol;
+	    if (length $symbol > $width) {
+		$width = length $symbol;
+	    }
 	}
     }
 
@@ -297,6 +305,247 @@ sub Compare {
     foreach my $holding (@big_diffs) {
 	$holding->printToCsvFile($holding->symbol() . '.csv');
     }
+}
+
+sub copyPrices
+{
+    my($self,
+       $other) = @_;
+    
+    foreach my $h (keys %{$self->holdings()}) {
+	if (! $self->holding($h)->ticker()->skip()) {
+	    if (defined($other->holding($h))) {
+		$self->holding($h)->copyPrice($other->holding($h));
+	    } else {
+		printf("WARNING: No price for holding \"%s\"\n", $h);
+	    }
+	}
+    }
+}
+
+sub printToCsvString
+{
+    my($self, 
+       $raS,           # Out: Output is written back to this array. 
+       $raFieldNames,  # In: Array of column names to print.
+                       #   If undef, then it will use all scalar fields.
+       $rhNameMap,     # In: Indirect the FieldName through this map.
+                       #   If undef, use the FieldNames directly.
+       $csv,           # In: A CSV object if you want to reuse one.
+       $isMstar,       # In: Apply morningstar rules.
+	) = @_;
+
+    $csv = Text::CSV_XS->new ({ binary => 1, eol => $/ }) unless defined $csv;
+    Util::printCsv($raFieldNames, $csv, $raS);
+    foreach my $symbol (sort keys %{ $self->{_holdings} }) {
+	$self->holding($symbol)->printToCsvString(
+	    $raS, $raFieldNames, $rhNameMap, $csv, $isMstar);
+    }
+}
+    
+sub printToCsvFile
+{
+    my($self,
+       $fname,
+       $raFieldNames,  # In: Array of transaction column names to print.
+                       #   If undef, then it will use all scalar fields.
+       $rhNameMap,     # In: Indirect the FieldName through this map.
+                       #   If undef, use the FieldNames directly.
+       $isMstar,       # In: Apply morningstar rules.
+       ) = @_;
+    my @S;
+    open my $io, ">", $fname or die "$fname: $!";
+    print "  Writing $fname\n";
+    $self->printToCsvString(\@S, $raFieldNames, $rhNameMap, undef, $isMstar);
+    print $io @S;
+    close $io;
+}
+
+# Uses the Morningstar headers
+sub printToMstarCsvFile
+{
+    my($self,
+       $fname,
+       ) = @_;
+    $self->printToCsvFile($fname, \@Transaction::MstarHeaders,
+			  \%Transaction::MstarMap, 1);
+}
+
+
+sub printRebalanceCsvString
+{
+    my($self, 
+       $raS,           # Out: Output is written back to this array. 
+       $csv,           # In: A CSV object if you want to reuse one.
+	) = @_;
+
+    $csv = Text::CSV_XS->new unless defined $csv;
+
+    # Need all these fields defined.
+    return unless
+	defined($self->assetAllocation())
+	&& defined($self->holdings())
+	&& defined($self->accounts());
+    
+    $self->printCategoryLinesString(
+	$raS,
+	$csv);
+}
+    
+sub printCategoryLinesString {
+    my($self, 
+       $raS,           # Out: Output is written back to this array. 
+       $csv,           # In: A CSV object if you want to reuse one.
+	) = @_;
+
+    my $kCategory = 'Category';
+    my $kAllocTickers = 'Alloc Tickers';
+    my $kOwnedTickers = 'Owned Tickers';
+    my $kValue = 'Value';
+    my $kAllocation = 'Allocation';
+    my $kCurrentWeight = 'Current Weight';
+    my $kDifference = 'Difference';
+    my $kDiffPercent = 'Diff %';
+    my $kTargetValue = 'Target Value';
+    my $kTargetValueDiff = 'Target Value Diff';
+    my $kRebalance = 'Rebalance';
+    my $kTargetBuy = 'Target Buy';
+    my $kBuy = 'Buy';
+    my $column_headers = [$kCategory, $kAllocTickers, $kOwnedTickers, $kValue,
+			  $kAllocation, $kCurrentWeight, $kDifference,
+			  $kDiffPercent, $kTargetValue, $kTargetValueDiff,
+			  $kRebalance, $kTargetBuy, $kBuy];
+    &Util::printCsv($column_headers, $csv, $raS);
+
+    # $per_cat_data->{$category}->{$header} = value
+    my $per_cat_data = {};
+
+    # Two passes are needed because much depends on the
+    # total_portfolio_value.
+    my $total_portfolio_value = 0;
+    my $total_alloc = 0;  # Just a sanity check
+    my $alloc = $self->{_assetAllocation};
+    foreach my $cat_name (sort keys %{ $alloc->categories() }) {
+	my $category_value = 0;
+	my $category = $alloc->category($cat_name);
+	my $raTickerSymbols = $category->symbols();
+	my $alloc_value = $category->value() / 100.0;
+	$total_alloc += $alloc_value;
+
+	next if $alloc_value == 0;
+
+	my @owned_symbols;
+	my @alloc_symbols;
+	foreach my $symbol (sort @{ $raTickerSymbols }) {
+	    push @alloc_symbols, $symbol;
+	    if (defined($self->holding($symbol))) {
+		$category_value += $self->holding($symbol)->value();
+		push @owned_symbols, $symbol;
+	    }
+	}
+	$total_portfolio_value += $category_value;
+	$gDebug && printf("Category %s = %f, total %f\n",
+			  $cat_name, $category_value,
+			  $total_portfolio_value);
+	my $alloc_symbols = join(",", @alloc_symbols);
+	my $owned_symbols = join(",", @owned_symbols);
+
+	$per_cat_data->{$cat_name} = {};
+	$per_cat_data->{$cat_name}->{$kCategory} = $cat_name;
+	$per_cat_data->{$cat_name}->{$kAllocTickers} = $alloc_symbols;
+	$per_cat_data->{$cat_name}->{$kOwnedTickers} = $owned_symbols;
+	$per_cat_data->{$cat_name}->{$kValue} = $category_value;
+	$per_cat_data->{$cat_name}->{$kAllocation} = $alloc_value;
+    }
+
+    if ( $total_alloc ne 1.0 ) {
+	printf("Warning: Total Asset Allocation isn't 1, it's %f, (diff %f)\n",
+	    $total_alloc, 1.0 - $total_alloc);
+    }
+
+    die "Total Portfolio Value is zero" if ($total_portfolio_value == 0.0);
+
+    # Set rebalance instructions
+    my $excess_buy = 0;  # This is the sum of all the buys & sells proposed for rebalancing
+    foreach my $cat_name (keys %{ $per_cat_data }) {
+	my $value = $per_cat_data->{$cat_name}->{$kValue};
+	my $current_weight = $value / $total_portfolio_value;
+	$per_cat_data->{$cat_name}->{$kCurrentWeight} = $current_weight;
+	
+	my $difference =
+	    $per_cat_data->{$cat_name}->{$kAllocation} - $current_weight;
+	$per_cat_data->{$cat_name}->{$kDifference} = $difference;
+
+	my $diff_percent = 0;
+	if ( $per_cat_data->{$cat_name}->{$kAllocation} != 0 ) {
+	    $diff_percent =
+		$difference / $per_cat_data->{$cat_name}->{$kAllocation};
+	}
+	$per_cat_data->{$cat_name}->{$kDiffPercent} = $diff_percent;
+
+	my $target_value =
+	    $total_portfolio_value
+	    * $per_cat_data->{$cat_name}->{$kAllocation};
+	$per_cat_data->{$cat_name}->{$kTargetValue} = $target_value;
+
+	my $target_value_diff = $target_value - $value;
+	$per_cat_data->{$cat_name}->{$kTargetValueDiff} = $target_value_diff;
+
+	my $rebalance = 0;
+	my $target_buy = 0;
+
+	# Rebalance rule: more than 5% delta and > $5000 difference.
+	if ( abs($diff_percent) > 0.05 && abs($target_value_diff) > 5000 ) {
+	    $rebalance = 1;
+	    $target_buy = $target_value_diff;
+	    $excess_buy += $target_buy;
+	}	    
+	$per_cat_data->{$cat_name}->{$kRebalance} = $rebalance;
+	$per_cat_data->{$cat_name}->{$kTargetBuy} = $target_buy;
+    }
+    
+    # Now write it out
+    foreach my $cat_name (sort
+			  { $per_cat_data->{$b}->{$kTargetValueDiff}
+			    <=> $per_cat_data->{$a}->{$kTargetValueDiff} }
+			  keys %{ $per_cat_data }) {
+	foreach my $k (@{$column_headers}) {
+	    printf("%s = %s,", $k, $per_cat_data->{$cat_name}->{$k});
+	}
+	print "\n";
+	&Util::printHashToCsv($per_cat_data->{$cat_name}, $column_headers,
+			      undef, $csv, $raS);
+    }
+    my $totals = {};
+    $totals->{$kValue} = $total_portfolio_value;
+    $totals->{$kBuy} = $excess_buy;
+    &Util::printHashToCsv($totals, $column_headers,
+			  undef, $csv, $raS);
+}
+
+sub printRebalanceCsvFile
+{
+    my($self,
+       $OutDir,        # Output directory
+       ) = @_;
+
+    # Need all these fields defined.
+    return unless
+	defined($self->assetAllocation())
+	&& defined($self->holdings())
+	&& defined($self->accounts());
+    
+    my $fname = $OutDir . '/' .
+	$self->name() . $time{'-yyyy-mm-dd'} . '.csv';
+
+    open my $io, ">", $fname or die "$fname: $!";
+    print "  Writing $fname\n";
+    my $csv = Text::CSV_XS->new;
+
+    my @S;
+    $self->printRebalanceCsvString(\@S, $csv);
+    print $io join("\n",@S), "\n";
+    close $io;
 }
 
 1;

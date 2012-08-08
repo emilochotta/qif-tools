@@ -49,16 +49,18 @@ sub printToStringArray
 sub printToCsvString
 {
     my($self, 
+       $raS,           # Out: Output is written back to this array. 
        $raTransCols,   # In: Array of transaction column names to print.
                        #   If undef, then it will use all scalar fields.
        $rhNameMap,     # In: Indirect the FieldName through this map.
                        #   If undef, use the FieldNames directly.
        $csv,           # In: A CSV object if you want to reuse one.
-       $raS,           # Out: Output is written back to this array. 
+       $isMstar,       # In: Apply morningstar rules.
 	) = @_;
     
     foreach my $transaction ( @{ $self } ) {
-	$transaction->printToCsvString($raTransCols, $rhNameMap, $csv, $raS);
+	$transaction->printToCsvString($raS, $raTransCols, $rhNameMap,
+				       $csv, $isMstar);
     }
 }
 
@@ -68,7 +70,7 @@ sub computeAllFromTransactions
        $value,$purchases,$my_return,$has_new_trans) = @_;
 
     $$shares = 0;
-    $$price = 0;
+    $$price = 0 unless defined $$price;
     $$estimated = 0;
     $$cost_basis = 0;
     $$gain = 0;
