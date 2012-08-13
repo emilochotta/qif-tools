@@ -14,17 +14,17 @@ use warnings;
 
 # a test method that runs 1 test
 sub test_new : Test(2) {
-    my $a = new Account();
+    my $a = new Account('etrade');
     ok(defined($a), 'Account object was created');
     ok($a->isa('Account'), 'Account object isa Account');
 };
 
 # Test reading an account from a QIF file
 sub test_from_qif : Test(14) {
-    my $a = Account::newFromQif('account', 'account.qif');
+    my $a = Account::newFromQif('etrade', 'account.qif');
     ok(defined($a), 'Account object was created');
     ok($a->isa('Account'), 'Account object isa Account');
-    is($a->name(), 'account', 'Set Name as Expected.');
+    is($a->name(), 'etrade', 'Set Name as Expected.');
     is($a->qif_filename(), 'account.qif', 'Set Filename as Expected.');
     is(ref($a->holdings()), 'HASH', 'Holdings are a hash');
     my @k = keys %{$a->holdings()};
@@ -39,9 +39,9 @@ sub test_from_qif : Test(14) {
     $a->printToStringArray($raStrings,
 			   '',  # Prefix
 			   1);  # Print Transactions
-    is(@$raStrings, 119, 'Returned expected number of strings');
-    is($raStrings->[0], 'Account: "account"', 'Printed');
-#    print join("\n", @$raStrings);
+    is(@$raStrings, 161, 'Returned expected number of strings');
+    is($raStrings->[0], 'Account: "etrade"', 'Printed');
+    print join("\n", @$raStrings);
     my $raCsv = [];
     $a->printToCsvString($raCsv, \@Transaction::MstarHeaders,
 			 \%Transaction::MstarMap, undef, 1);
@@ -49,7 +49,7 @@ sub test_from_qif : Test(14) {
     is(@$raCsv, 6, 'Returned expected number of CSV');
     is($raCsv->[0], "Ticker,Account,Date,Action,Name,Price,Shares/Ratio,Comm,Amount\n",
        'Formated as Morningstar CSV');
-    is($raCsv->[1], "GLD,account,1-12-2011,Buy,\"SPDR GOLD TRUST GOLD SHARES\",134.70,95,2.00,12798.50\n",
+    is($raCsv->[1], "GLD,etrade,1-12-2011,Buy,\"SPDR GOLD TRUST GOLD SHARES\",134.70,95,2.00,12798.50\n",
        'Formated as Morningstar CSV');
 };
 

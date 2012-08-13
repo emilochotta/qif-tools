@@ -8,7 +8,7 @@ use Account;
 use AssetAllocation;
 use AssetCategory;
 use Holding;
-use Ticker;
+use Ticker qw($kCash);
 use Transaction;
 use Transactions;
 use Text::CSV_XS;
@@ -53,6 +53,7 @@ our %PortfolioDefs = (
 	'etrade-5557',
 	'etrade-ira',
 	'etrade-joint',
+	'schwab-bin-401k',
 	'schwab-bin-ira',
 	'schwab-emil',
 	'schwab-emil-401k',
@@ -79,6 +80,28 @@ our %PortfolioDefs = (
     ],	
     );
 
+# Use a bit vec for Analysis of holdings w.r.t. asset allocation.
+our $IDEAL = 1;              # Practically perfect in every way.
+our $OVER_ALLOCATION = 2;    # Too much of this holding.
+our $HIGH_DIVIDEND_TAX = 4;  # High yield in a taxable account.
+our $CAPITAL_LOSS = 8;       # Currently have a capital loss.
+our $NON_IDEAL_TICKER = 16;  # Not the first ticker on the list.
+
+# Portfolio analysis hash names / CSV column header names.
+my $kCategory = 'Category';
+my $kAllocTickers = 'Alloc Tickers';
+my $kOwnedTickers = 'Owned Tickers';
+my $kValue = 'Value';
+my $kAllocation = 'Allocation';
+my $kCurrentWeight = 'Current Weight';
+my $kDifference = 'Difference';
+my $kDiffPercent = 'Diff %';
+my $kTargetValue = 'Target Value';
+my $kTargetValueDiff = 'Target Value Diff';
+my $kRebalance = 'Rebalance';
+my $kTargetBuy = 'Target Buy';
+my $kBuy = 'Buy';
+
 #-----------------------------------------------------------------
 # Global Variables with File Scope
 #-----------------------------------------------------------------
@@ -94,13 +117,37 @@ sub new
     my $class = shift;
     my $self = {
 	_name => shift,             # Must be defined.
+
+	# May be undefined.
 	_assetAllocation => shift,
-	_holdings => shift,         # Hash by symbol.
-	_accounts => shift,         # Hash by acct name.
+
+	# Hash by symbol.  Holdings and accounts.  Holdings aren't
+	# shared by portfolios.
+	_holdings => shift,
+
+	# Hash by acct name.  Account objects can be shared across
+	# multiple portfolios, so generally treated as read only.
+	_accounts => shift,
+
+	# Hash by assetAllocation category name.  Analysis of
+	# portfolio against asset allocation.
+	_perCatData => shift,
+
+	# Hash by symbol.  Analysis of portfolio against asset
+	# allocation.
+	_perHoldingData => shift,
+
+	# Total portfolio value.  Calculated from holdings (not
+	# accounts.)
+	_value => shift,
     };
     if (defined($PortfoliosByName->{$self->{_name}})) {
 	die "A portfolio named $self->{_name} already exists.\n";
     }
+    if (!defined($self->{_perCatData})) {
+	$self->{_perCatData} = {};
+    }
+    
     bless $self, $class;
     $PortfoliosByName->{$self->{_name}} = $self;
     return $self;
@@ -111,6 +158,9 @@ sub assetAllocation { $_[0]->{_assetAllocation}; }
 sub holdings { $_[0]->{_holdings}; }
 sub holding { $_[0]->{_holdings}->{$_[1]}; }
 sub accounts { $_[0]->{_accounts}; }
+sub perCatData { $_[0]->{_perCatData}; }
+sub perHoldingData { $_[0]->{_perHoldingData}; }
+sub value { $_[0]->{_value}; }
 
 sub SetAssetAllocation { $_[0]->{_assetAllocation} = $_[1]; }
 
@@ -172,6 +222,7 @@ sub newFromQuickenSummaryReport
 	    my $holding = Holding->new(
 		$ticker,
 		undef,  # No account
+		undef,  # No assetCategory
 		undef,  # No transactions
 		$shares,
 		$price,
@@ -197,6 +248,19 @@ sub newFromQuickenSummaryReport
 sub Set_Asset_Allocation {
     my ($self, $a) = @_;
     $self->{_assetAllocation} = $a if defined $a;
+
+    # Assign the AssetCategory to holdings of the portfolio, but not
+    # of the accounts because account objects are shared by multiple
+    # portfolios but AssetAllocation is per portfolio.
+    foreach my $symbol (keys %{$self->holdings()}) {
+
+	# Need also check if this is defined.
+	if (defined($a->symbol($symbol))) {
+	    $self->holding($symbol)->setAssetCategory($a->symbol($symbol));
+	} else {
+	    die "No asset category for $symbol in portfolio $self->name()";
+	}
+    }    
     return $self->{_assetAllocation};
 }
 
@@ -224,7 +288,8 @@ sub newPortfoliosFromAccounts {
 	    # this portfolio.
 	    foreach my $symbol (keys %{ $account->holdings() }) {
 		my $deb = 0;
-		$deb = 1 if ($symbol eq 'DJP');
+#		$deb = 1 if ($symbol eq 'DJP');
+		next if ($account->holding($symbol)->ticker()->skip());
 		if ($deb) {
 		    printf("Add Account %s Holding of %s to Portfolio %s\n",
 			   $account_name, $symbol, $portfolio_name);
@@ -313,11 +378,37 @@ sub copyPrices
        $other) = @_;
     
     foreach my $h (keys %{$self->holdings()}) {
-	if (! $self->holding($h)->ticker()->skip()) {
+	my $ticker = $self->holding($h)->ticker();
+	if (! $ticker->skip()) {
 	    if (defined($other->holding($h))) {
 		$self->holding($h)->copyPrice($other->holding($h));
+	    } elsif ($h eq $Ticker::kCash) {
+		$self->holding($h)->setPrice(1.0);
+	    } elsif (defined($ticker->attribute('Price'))
+		     && $ticker->attribute('Price') != 0) {
+		$self->holding($h)->setPrice($ticker->attribute('Price'));
 	    } else {
 		printf("WARNING: No price for holding \"%s\"\n", $h);
+	    }
+	}
+    }
+    foreach my $a (keys %{$self->accounts()}) {
+	my $account = $self->accounts()->{$a};
+	foreach my $h (keys %{$account->holdings()}) {
+#	    printf("Copy prices for %s in acct %s\n", $h, $a);
+	    my $ticker = $account->holding($h)->ticker();
+	    if (! $ticker->skip()) {
+		if (defined($other->holding($h))) {
+		    $account->holding($h)->copyPrice($other->holding($h));
+		} elsif ($h eq $Ticker::kCash) {
+		    $account->holding($h)->setPrice(1.0);
+		} elsif (defined($ticker->attribute('Price'))
+			 && $ticker->attribute('Price') != 0) {
+		    $self->holding($h)->setPrice(
+			$ticker->attribute('Price'));
+		} else {
+		    printf("WARNING: No price for holding \"%s\"\n", $h);
+		}
 	    }
 	}
     }
@@ -387,43 +478,81 @@ sub printRebalanceCsvString
 	&& defined($self->holdings())
 	&& defined($self->accounts());
     
+    $self->analyzeHoldingsAgainstAllocations();
     $self->printCategoryLinesString(
 	$raS,
 	$csv);
+    $self->printTickerLinesString(
+	$raS,
+	$csv);
+
+    # Need to produce a set of transactions that are the proposed
+    # trades to balance the portfolio.
+    #
+    # First, find assets that are high yield but not in tax advantaged
+    # accounts.
+    #
+    # Algorithm:
+    # 1) Find total available value in tax advantaged accounts.
+    #
+    # 2) Compute portfolio of ideal holdings according to asset
+    #    allocation.
+    #
+    # 3) Iterate through ideal holdings ordered by estimated yearly
+    #    dividend, subtracting holding values until out of room.
+    #   - Discard any holdings already in a tax advantaged account.
+    #   - Discard any holdings with capital loss, since those
+    #     have weird tax laws.
+    # 
+    # 4) Sell any holdings in the tax advantaged accounts not
+    #    identified as part of the list from 3.
+    #   - Certain accounts have limit symbols they can hold, e.g.
+    #     Vanguard IRA can hold only mutual funds.  So, we need to
+    #     obey these rules.
+    #
+    # 5) Sell non-ideal assets? Assets over allocation?
+    #    Asset categories split into multiple accounts?
+    #
+    # 6) Use a simple greedy algorithm to buy the assets back into
+    #    accounts.
+    #
+    # Stuff we need:
+    #  - target portfolio.  Calculated from asset allocation.
+    #  - rebalancing transactions.
+    #  - How to print out the transactions?
+    #  - Cash management.
+    #  - Account info: tax advantaged, allowable tickers in account.
+    #  - Ticker info: yield.
+
+    my $availableTaxAdvantagedValue =
+	$self->computeTaxAdvantagedValue();
+
+    printf("Tax Advantaged total is %f\n", $availableTaxAdvantagedValue);
 }
     
-sub printCategoryLinesString {
-    my($self, 
-       $raS,           # Out: Output is written back to this array. 
-       $csv,           # In: A CSV object if you want to reuse one.
-	) = @_;
+sub calculateValue {
+    my($self) = @_;
 
-    my $kCategory = 'Category';
-    my $kAllocTickers = 'Alloc Tickers';
-    my $kOwnedTickers = 'Owned Tickers';
-    my $kValue = 'Value';
-    my $kAllocation = 'Allocation';
-    my $kCurrentWeight = 'Current Weight';
-    my $kDifference = 'Difference';
-    my $kDiffPercent = 'Diff %';
-    my $kTargetValue = 'Target Value';
-    my $kTargetValueDiff = 'Target Value Diff';
-    my $kRebalance = 'Rebalance';
-    my $kTargetBuy = 'Target Buy';
-    my $kBuy = 'Buy';
-    my $column_headers = [$kCategory, $kAllocTickers, $kOwnedTickers, $kValue,
-			  $kAllocation, $kCurrentWeight, $kDifference,
-			  $kDiffPercent, $kTargetValue, $kTargetValueDiff,
-			  $kRebalance, $kTargetBuy, $kBuy];
-    &Util::printCsv($column_headers, $csv, $raS);
+    $self->{_value} = 0;
+    foreach my $symbol (keys %{$self->holdings()}) {
+	my $holding = $self->holding($symbol);
+	my $ticker = $holding->ticker();
+	if (!$ticker->skip()) {
+	    $self->{_value} += $holding->value();
+	}
+    }
+    die "Total Portfolio Value is zero" if ($self->{_value} == 0.0);
+}
 
-    # $per_cat_data->{$category}->{$header} = value
-    my $per_cat_data = {};
+sub analyzeHoldingsAgainstAllocations {
+    my($self) = @_;
+    if (!defined($self->{_value})) {
+	$self->calculateValue();
+    }
 
-    # Two passes are needed because much depends on the
-    # total_portfolio_value.
     my $total_portfolio_value = 0;
     my $total_alloc = 0;  # Just a sanity check
+    my $excess_buy = 0;  # This is the sum of all the buys & sells proposed for rebalancing
     my $alloc = $self->{_assetAllocation};
     foreach my $cat_name (sort keys %{ $alloc->categories() }) {
 	my $category_value = 0;
@@ -450,46 +579,33 @@ sub printCategoryLinesString {
 	my $alloc_symbols = join(",", @alloc_symbols);
 	my $owned_symbols = join(",", @owned_symbols);
 
-	$per_cat_data->{$cat_name} = {};
-	$per_cat_data->{$cat_name}->{$kCategory} = $cat_name;
-	$per_cat_data->{$cat_name}->{$kAllocTickers} = $alloc_symbols;
-	$per_cat_data->{$cat_name}->{$kOwnedTickers} = $owned_symbols;
-	$per_cat_data->{$cat_name}->{$kValue} = $category_value;
-	$per_cat_data->{$cat_name}->{$kAllocation} = $alloc_value;
-    }
+	$self->{_perCatData}->{$cat_name} = {};
+	my $cat_data = $self->{_perCatData}->{$cat_name};
+	$cat_data->{$kCategory} = $cat_name;
+	$cat_data->{$kAllocTickers} = $alloc_symbols;
+	$cat_data->{$kOwnedTickers} = $owned_symbols;
+	$cat_data->{$kValue} = $category_value;
+	$cat_data->{$kAllocation} = $alloc_value;
 
-    if ( $total_alloc ne 1.0 ) {
-	printf("Warning: Total Asset Allocation isn't 1, it's %f, (diff %f)\n",
-	    $total_alloc, 1.0 - $total_alloc);
-    }
-
-    die "Total Portfolio Value is zero" if ($total_portfolio_value == 0.0);
-
-    # Set rebalance instructions
-    my $excess_buy = 0;  # This is the sum of all the buys & sells proposed for rebalancing
-    foreach my $cat_name (keys %{ $per_cat_data }) {
-	my $value = $per_cat_data->{$cat_name}->{$kValue};
-	my $current_weight = $value / $total_portfolio_value;
-	$per_cat_data->{$cat_name}->{$kCurrentWeight} = $current_weight;
+	my $current_weight = $category_value / $self->value();
+	$cat_data->{$kCurrentWeight} = $current_weight;
 	
 	my $difference =
-	    $per_cat_data->{$cat_name}->{$kAllocation} - $current_weight;
-	$per_cat_data->{$cat_name}->{$kDifference} = $difference;
+	    $cat_data->{$kAllocation} - $current_weight;
+	$cat_data->{$kDifference} = $difference;
 
 	my $diff_percent = 0;
-	if ( $per_cat_data->{$cat_name}->{$kAllocation} != 0 ) {
+	if ( $cat_data->{$kAllocation} != 0 ) {
 	    $diff_percent =
-		$difference / $per_cat_data->{$cat_name}->{$kAllocation};
+		$difference / $cat_data->{$kAllocation};
 	}
-	$per_cat_data->{$cat_name}->{$kDiffPercent} = $diff_percent;
+	$cat_data->{$kDiffPercent} = $diff_percent;
 
-	my $target_value =
-	    $total_portfolio_value
-	    * $per_cat_data->{$cat_name}->{$kAllocation};
-	$per_cat_data->{$cat_name}->{$kTargetValue} = $target_value;
+	my $target_value = $self->value() * $cat_data->{$kAllocation};
+	$cat_data->{$kTargetValue} = $target_value;
 
-	my $target_value_diff = $target_value - $value;
-	$per_cat_data->{$cat_name}->{$kTargetValueDiff} = $target_value_diff;
+	my $target_value_diff = $target_value - $category_value;
+	$cat_data->{$kTargetValueDiff} = $target_value_diff;
 
 	my $rebalance = 0;
 	my $target_buy = 0;
@@ -500,27 +616,102 @@ sub printCategoryLinesString {
 	    $target_buy = $target_value_diff;
 	    $excess_buy += $target_buy;
 	}	    
-	$per_cat_data->{$cat_name}->{$kRebalance} = $rebalance;
-	$per_cat_data->{$cat_name}->{$kTargetBuy} = $target_buy;
+	$cat_data->{$kRebalance} = $rebalance;
+	$cat_data->{$kTargetBuy} = $target_buy;
     }
-    
+
+    if ( $total_alloc ne 1.0 ) {
+	printf("Warning: Total Asset Allocation isn't 1, it's %f, (diff %f)\n",
+	    $total_alloc, 1.0 - $total_alloc);
+    }
+    if (abs($total_portfolio_value-$self->value()) > $gZero) {
+	printf("Warning: Total Portfolio Value by asset claass (%f) != value by holding (%f)\n",
+	    $total_portfolio_value, $self->value());
+    }
+}
+
+sub printCategoryLinesString {
+    my($self, 
+       $raS,           # Out: Output is written back to this array. 
+       $csv,           # In: A CSV object if you want to reuse one.
+	) = @_;
+
+    my $column_headers = [$kCategory, $kAllocTickers, $kOwnedTickers, $kValue,
+			  $kAllocation, $kCurrentWeight, $kDifference,
+			  $kDiffPercent, $kTargetValue, $kTargetValueDiff,
+			  $kRebalance, $kTargetBuy, $kBuy];
+    &Util::printCsv($column_headers, $csv, $raS);
+
     # Now write it out
     foreach my $cat_name (sort
-			  { $per_cat_data->{$b}->{$kTargetValueDiff}
-			    <=> $per_cat_data->{$a}->{$kTargetValueDiff} }
-			  keys %{ $per_cat_data }) {
-	foreach my $k (@{$column_headers}) {
-	    printf("%s = %s,", $k, $per_cat_data->{$cat_name}->{$k});
-	}
-	print "\n";
-	&Util::printHashToCsv($per_cat_data->{$cat_name}, $column_headers,
+			  { $self->{_perCatData}->{$b}->{$kTargetValueDiff}
+			    <=> $self->{_perCatData}->{$a}->{$kTargetValueDiff} }
+			  keys %{ $self->{_perCatData} }) {
+# 	foreach my $k (@{$column_headers}) {
+# 	    printf("%s = %s,", $k, $self->{_perCatData}->{$cat_name}->{$k});
+# 	}
+# 	print "\n";
+	&Util::printHashToCsv($self->{_perCatData}->{$cat_name},
+			      $column_headers,
 			      undef, $csv, $raS);
     }
     my $totals = {};
-    $totals->{$kValue} = $total_portfolio_value;
-    $totals->{$kBuy} = $excess_buy;
+    $totals->{$kValue} = $self->value();
+    # $totals->{$kBuy} = $excess_buy;
     &Util::printHashToCsv($totals, $column_headers,
 			  undef, $csv, $raS);
+}
+
+sub printTickerLinesString {
+    my($self, 
+       $raS,           # Out: Output is written back to this array. 
+       $csv,           # In: A CSV object if you want to reuse one.
+	) = @_;
+
+    my $ticker_headers = ["Name", "Ticker", "Account", "Price", "Shares",
+	"Value", "Tax Advantaged"];
+    &Util::printCsv($ticker_headers, $csv, $raS);
+    
+    foreach my $acct_name (sort keys %{ $self->accounts() }) {
+	my $acct = $self->accounts()->{$acct_name};
+	foreach my $holding_name (sort keys %{ $acct->holdings() }) {
+	    my $holding = $acct->holdings()->{$holding_name};
+	    my $ticker = $holding->ticker();
+	    next if ($ticker->skip());
+	    my $name = $ticker->name();
+	    my $symbol = $ticker->symbol();
+	    my $price = $holding->price();
+	    my $shares = $holding->shares();
+	    my $value = $holding->value();
+	    my $tax_advantaged = ($acct->tax_advantaged()) ? $value : 0;
+	    if ( $shares > $gZero ) {
+		# TODO: list asset category and any problems
+		# with the holding (non-ideal ticker, yield too
+		# high for taxable account, etc.)
+		my $line = [$name, $symbol, $acct_name, $price, $shares,
+		    $value, $tax_advantaged];
+		&Util::printCsv($line, $csv, $raS);
+		if (!defined $self->assetAllocation()->symbols()->{$symbol} ) {
+		    print "WARNING: No asset allocation class for ticker \"$symbol\"\n";
+		    printf("Add that ticker to asset-allocation-%s.csv\n",
+			   $self->name());
+		}
+	    }
+	}
+    }
+}
+
+sub computeTaxAdvantagedValue
+{
+    my($self) = @_;
+    my $value = 0;
+    foreach my $a (keys %{$self->accounts()}) {
+	my $account = $self->accounts()->{$a};
+	if ($account->tax_advantaged()) {
+	    $value += $account->value();
+	}
+    }
+    return $value;
 }
 
 sub printRebalanceCsvFile

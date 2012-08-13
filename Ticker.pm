@@ -4,26 +4,50 @@
 # has a symbol, like GOOG and a name like Google.  This class holds
 # information about the ticker itself, rather than any shares of that
 # ticker.
+#
+# One way to get ticker information is to create a Google Docs
+# spreadsheet and use the =GoogleFinance() function in it to grab the
+# needed info directly from google finance.  Then download this as a
+# CSV file.
+# See http://blog.growth5.com/2009/10/scraping-web-with-google-docs.html
+# https://support.google.com/docs/bin/answer.py?hl=en&answer=155178
+#
+# An alternative I haven't yet tried is to scrape it directly and/or
+# into an excel spreadsheet.  Scraping directly will be tricky because
+# the sites I want to scrape use AJAX, so it will require a Javascript
+# interpreter to render the page before it can be scraped.
+# Some links:
+# http://stackoverflow.com/questions/6704209/downloading-morningstar-webpages-for-screenscraping
+# http://finance.groups.yahoo.com/group/smf_addin/files/
+
 package Ticker;
 require Exporter;
 @ISA = qw(Exporter);
 @EXPORT_OK = qw($kCash);
 
+use Text::CSV_XS;
 use strict;
-use AssetClass qw($US_STOCK, $INTL_STOCK, $BOND, $REAL_ASSET, $CASH);
+use warnings;
+use AssetClass qw($US_STOCK $INTL_STOCK $BOND $REAL_ASSET $CASH);
+
+#-----------------------------------------------------------------
+# Initialization
+#-----------------------------------------------------------------
+
+my $gDebug = 1;
 
 # Decided to treat cash as its own ticker type.
 # So, from a ticker perspective it will be consistent.
-our $kCash = 'Cash';
+our $kCash = '-Cash-';
 
 our $gUnknown = 'Unknown';
 
-#
-# Every ticker ever purchased should be either in Skip or in Tickers
-#
+# #
+# # Every ticker ever purchased should be either in Skip or in Tickers
+# #
 my %Skip = (
-    '2004-07 DP407070 Bin' => '1', # ESO
-    '2007-07 FS783025 Bin' => '1', # ESO
+    '2004-07 DP407070 Bin' => '1',
+    '2007-07 FS783025 Bin' => '1',
     'TOTAL Investments' => '1',
     'A' => '1',
     'AGERE SYSTEMS INC CL A' => '1',
@@ -49,15 +73,12 @@ my %Skip = (
     'BROADCOM CORP CL A' => '1',
     'CA PORTFOLIO 2018 (INDEX)' => '',
     'CA PORTFOLIO 2021 (INDEX)' => '',
-    'CALL XILINX INC$21 EXP 08/22/09' => '',
     'CALL XILINX INC$22.50 EXP 11/18/06' => 'XLQKX',
     'CALL XILINX INC$22.50 EXP 04/18/09' => 'XLQDX',
-    'CALL XILINX INC$25 ADJ EXP 01/20/07' => '',
     'CALL XILINX INC$25 EXP 03/22/08' => 'XLQCE',
     'CALL XILINX INC$25 EXP 04/19/08' => 'XLQDE',
     'CALL XILINX INC$25 EXP 06/21/08' => 'XLQFE',
     'CALL XILINX INC$25 EXP 07/19/08' => 'XLQGE',
-    'CALL XILINX INC$25 EXP 10/18/08' => '',
     'CALL XILINX INC$25 EXP 10/21/06' => 'XLQJE',
     'CALL XILINX INC$25 EXP 11/18/06' => 'XLQKE',
     'CALL XILINX INC$25 EXP 12/16/06' => 'XLQLE',
@@ -66,8 +87,11 @@ my %Skip = (
     'CALL XILINX INC$27.50 EXP 06/16/07' => 'XLQFY',
     'CALL XILINX INC$27.50 EXP 09/20/08' => 'XLQIY',
     'CALL XILINX INC$27.50 EXP 11/17/07' => 'XLQKY',
-    'CALL XILINX INC$30 EXP 09/16/06' => '',
     'CALL XILINX INC$30 EXP 09/22/07' => 'XLQIF',
+    'CALL XILINX INC$21 EXP 08/22/09' => '',
+    'CALL XILINX INC$25 ADJ EXP 01/20/07' => '',
+    'CALL XILINX INC$25 EXP 10/18/08' => '',
+    'CALL XILINX INC$30 EXP 09/16/06' => '',
     'CALL XILINX INC$22.50 EXP 09/19/09' => '',
     'CALL XILINX INC$21 EXP 09/19/09' => '',
     'CALL XILINX INC$23 EXP 10/17/09' => '',
@@ -118,16 +142,16 @@ my %Skip = (
     'Lucent Technologies Inc' => '1',
     'MASTERS SELECT SMALLER COMPANS FUND' => 'MSSFX',
     'MCK' => '1',
-    'Microsoft' => '1',
+     'Microsoft' => '1',
     'OAKMARK INTERNATIONAL FUND' => 'OAKIX',
     'OPPENHEIMER QUEST BAL VALUE A' => 'QVGIX',
     'Oracle Corp' => '1',
-    'PASSIVE AGE BASED PORTFOLIO 5-8 - 2937' => '1',
-    'PASSIVE AGE BASED PORTFOLIO 9-10 - 2938' => '1',
+     'PASSIVE AGE BASED PORTFOLIO 5-8 - 2937' => '1',
+     'PASSIVE AGE BASED PORTFOLIO 9-10 - 2938' => '1',
     'PHOENIX  INSIGHT SMALL CAP VALUE FUND CLASS A' => 'HSVZX',
-    'PRINCIPAL SAM CONSERV GROWTH PORT CL B' => '1',
-    'PRUDENTIAL JENNISON NATURAL RES C' => '1',
-    'ROYCE VALUE PLUS FUND INVESTOR CLASS' => 'RYVPX',
+     'PRINCIPAL SAM CONSERV GROWTH PORT CL B' => '1',
+     'PRUDENTIAL JENNISON NATURAL RES C' => '1',
+     'ROYCE VALUE PLUS FUND INVESTOR CLASS' => 'RYVPX',
     'RS VALUE FUND' => 'RSVAX',
     'SCH CA MUNI MONEY FD SWEEP SHA' => 'SWCXX',
     'SCHRODER CAPITAL US OPPORTUNITIES FUND/INV' => 'SCUIX',
@@ -155,7 +179,6 @@ my %Skip = (
     'Vanguard 500 Index Fund Admiral Shares' => 'VFIAX',
     'Vanguard California Tax-Exempt Money Market Fund' => 'VCTXX',
     'Vanguard Emerging Markets Stock Index' => 'VEMAX', # converted to adm shrs
-    'Vanguard Energy Fund Investor Shares' => 'VGENX',
     'VANGUARD EXTENDED MKT FDSTK MKT VIPERS' => 'VXF',
     'Vanguard FTSE All-World ex-US Index Fund Investor Shares' => '',
     'Vanguard High-Yield Corporate Fund Investor Shares' => 'VWEHX',
@@ -163,7 +186,7 @@ my %Skip = (
     'Vanguard Long-Term Treasury Fund Investor Shares' => 'VUSUX', # all became VUSUX
     'VANGUARD MATERIALS' => 'VAW',
     'Vanguard Mid-Cap Index Fund Investor Shares' => 'VIMAX', # converted to adm
-    'Vanguard SP 500 index' => 'VFIAX',  # This was transfered to VFIAX
+    'Vanguard SP 500 index' => 'VFINX',  # This was transfered to VFIAX
     'VANGUARD LONG-TERM CORPORATE BOND' => 'VWESX',
     'Vanguard Inflation-Protected Securities Fund Investor Shares' => 'VIPSX',
     'VANGUARD INTERNATIONAL VALUE' => 'VTRIX',
@@ -177,7 +200,7 @@ my %Skip = (
     'Wal-Mart Stores Inc' => '1',
     'XILINX INC' => '1',
     'Xilinx' => '1',
-    'XILINX INC' => '1',
+    'XILINX INC ESPP' => 'XLNX',
     'XLNX Dec 27.5 Call' => '1',
     'XLNX Dec-06 $25 Call' => '1',
     'XLNX Feb 30 Call' => '1',
@@ -233,168 +256,204 @@ my %Skip = (
     'SCHWAB RETIREMENT ADVANTAGE' => '1',
     );
 
-my %Tickers = (
-    $kCash => $kCash,
-    $gUnknown => 0,
-    'American Funds Growth Fund of Amer R4' => 'RGAEX',
-    'Columbia Mid Cap Value Z' => 'NAMAX',
-    'Eaton Vance Large-Cap Value I' => 'EILVX',
-    'EXCELSIOR VALUE AND RESTRUCTURING FUND' => 'UMBIX',
-    'FAIRHOLME FUND' => 'FAIRX',
-    'Harbor International Instl' => 'HAINX',
-    'IPATH DOW JONES-UBS COMMODITY INDEX TOTAL RETURN ETN' => 'DJP',
-    'LOOMIS SAYLES GLOBAL BOND/RETAIL' => 'LSGLX',
-    'Nuveen Winslow Large-Cap Growth I' => 'NVLIX',
-    'PIMCO Total Return Instl' => 'PTTRX',
-    'RIDGEWORTH US GOV SEC ULTRA SHORT BD I' => 'SIGVX',
-    'Royce Low Priced Stock Svc' => 'RYVPX',
-    'SCHWAB S&P 500 INDEX SEL' => 'SWPPX',
-    'SPDR GOLD TRUST GOLD SHARES' => 'GLD',
-    'THIRD AVENUE VALUE FUND' => 'TAVFX',
-    'T. Rowe Price Instl Large Cap Value' => 'TILCX',
-    'UMB SCOUT WORLDWIDE FUND' => 'UMBWX',
-    'Vanguard 500 Index Fund Signal Shares' => 'VIFSX',
-    'Vanguard Wellington Adm' => 'VWENX',
-    'Vanguard California Intermediate-Term Tax-Exempt Fund Investor Shares' => 'VCAIX',
-    'Vanguard Convertible Securities Fund' => 'VCVSX',
-    'VANGUARD DIVIDEND APPRECIATION ETF' => 'VIG',
-    'VANGUARD EMERGING MARKET' => 'VWO',
-    'Vanguard Emerging Markets Stock Index Fund Admiral Shares' => 'VEMAX',
-    'VANGUARD ENERGY ETF' => 'VDE',
-    'Vanguard Extended Market Index Fund Investor Shares' => 'VEXMX',
-    'VANGUARD FTSE ETF **PENDING ENLISTMENT* --BEST EFFOR' => 'VSS',
-    'Vanguard FTSE All-World ex-US Index Fund Admiral' => 'VFWAX',
-    'Vanguard FTSE All-World ex-US Small-Cap Index Fund Investor Shares' => 'VFSVX',
-    'VANGUARD GLOBAL EQUITY FUND INVESTOR SHARE' => 'VHGEX',
-    'Vanguard GNMA Fund Admiral Shares' => 'VFIJX',
-    'Vanguard High-Yield Corporate Fund Admiral Shares' => 'VWEAX',
-    'Vanguard Inflation-Protected Securities Fund Admiral Shares' => 'VAIPX',
-    'Vanguard Intermediate-Term Investment-Grade Fund Admiral Shares' => 'VFIDX',
-    'Vanguard Intermediate-Term Bond Index Fund Admiral Shares' => 'VBILX',
-    'Vanguard International Equity Index Funds' => 'VNQI',
-    'VANGUARD INTL EQTY INDEXFTSE ALL WORLD EX US ETF' => 'VEU',
-    'Vanguard Long-Term Treasury Fund Admiral Shares' => 'VUSUX',
-    'VANGUARD MEGA CAP 300 INDEX ETF' => 'MGC',
-    'VANGUARD MID CAP ETF' => 'VO',
-    'Vanguard Mid-Cap Growth Fund' => 'VMGRX',
-    'Vanguard Mid-Cap Index Fund Admiral Shares' => 'VIMAX',
-    'Vanguard Prime Money Market Fund' => 'VMMXX',
-    'VANGUARD REIT' => 'VNQ',
-    'Target Retirement 2030 Trust I' => 'VTHRX',
-    'VANGUARD SHORT TERM BOND ETF' => 'BSV',
-    'VANGUARD SMALL-CAP VIPERS' => 'VB',
-    'VANGUARD TOTAL INTL STOCK INDEX' => 'VGTSX',
-    'Vanguard Wellesley Income Adm' => 'VWIAX',
-    'Victory Inst Diversified Stock' => 'VIDSX',
-    'William Blair International Growth N' => 'WBIGX',
-    'XILINX INC ESPP' => 'XLNX',
-    );
+# my %Tickers = (
+#     $kCash => $kCash,
+#     $gUnknown => 0,
+#     'American Funds Growth Fund of Amer R4' => 'RGAEX',
+#     'Columbia Mid Cap Value Z' => 'NAMAX',
+#     'Eaton Vance Large-Cap Value I' => 'EILVX',
+#     'EXCELSIOR VALUE AND RESTRUCTURING FUND' => 'UMBIX',
+#     'FAIRHOLME FUND' => 'FAIRX',
+#     'Harbor International Instl' => 'HAINX',
+#     'IPATH DOW JONES-UBS COMMODITY INDEX TOTAL RETURN ETN' => 'DJP',
+#     'LOOMIS SAYLES GLOBAL BOND/RETAIL' => 'LSGLX',
+#     'Nuveen Winslow Large-Cap Growth I' => 'NVLIX',
+#     'PIMCO Total Return Instl' => 'PTTRX',
+#     'RIDGEWORTH US GOV SEC ULTRA SHORT BD I' => 'SIGVX',
+#     'Royce Low Priced Stock Svc' => 'RYVPX',
+#     'SCHWAB S&P 500 INDEX SEL' => 'SWPPX',
+#     'SPDR GOLD TRUST GOLD SHARES' => 'GLD',
+#     'THIRD AVENUE VALUE FUND' => 'TAVFX',
+#     'T. Rowe Price Instl Large Cap Value' => 'TILCX',
+#     'UMB SCOUT WORLDWIDE FUND' => 'UMBWX',
+#     'Vanguard 500 Index Fund Signal Shares' => 'VIFSX',
+#     'Vanguard Wellington Adm' => 'VWENX',
+#     'Vanguard California Intermediate-Term Tax-Exempt Fund Investor Shares' => 'VCAIX',
+#     'Vanguard Convertible Securities Fund' => 'VCVSX',
+#     'VANGUARD DIVIDEND APPRECIATION ETF' => 'VIG',
+#     'VANGUARD EMERGING MARKET' => 'VWO',
+#     'Vanguard Emerging Markets Stock Index Fund Admiral Shares' => 'VEMAX',
+#     'VANGUARD ENERGY ETF' => 'VDE',
+#     'Vanguard Energy Fund Investor Shares' => 'VGENX',
+#     'Vanguard Extended Market Index Fund Investor Shares' => 'VEXMX',
+#     'VANGUARD FTSE ETF **PENDING ENLISTMENT* --BEST EFFOR' => 'VSS',
+#     'Vanguard FTSE All-World ex-US Index Fund Admiral' => 'VFWAX',
+#     'Vanguard FTSE All-World ex-US Small-Cap Index Fund Investor Shares' => 'VFSVX',
+#     'VANGUARD GLOBAL EQUITY FUND INVESTOR SHARE' => 'VHGEX',
+#     'Vanguard GNMA Fund Admiral Shares' => 'VFIJX',
+#     'Vanguard High-Yield Corporate Fund Admiral Shares' => 'VWEAX',
+#     'Vanguard Inflation-Protected Securities Fund Admiral Shares' => 'VAIPX',
+#     'Vanguard Intermediate-Term Investment-Grade Fund Admiral Shares' => 'VFIDX',
+#     'Vanguard Intermediate-Term Bond Index Fund Admiral Shares' => 'VBILX',
+#     'Vanguard International Equity Index Funds' => 'VNQI',
+#     'VANGUARD INTL EQTY INDEXFTSE ALL WORLD EX US ETF' => 'VEU',
+#     'Vanguard Long-Term Treasury Fund Admiral Shares' => 'VUSUX',
+#     'VANGUARD MEGA CAP 300 INDEX ETF' => 'MGC',
+#     'VANGUARD MID CAP ETF' => 'VO',
+#     'Vanguard Mid-Cap Growth Fund' => 'VMGRX',
+#     'Vanguard Mid-Cap Index Fund Admiral Shares' => 'VIMAX',
+#     'Vanguard Prime Money Market Fund' => 'VMMXX',
+#     'VANGUARD REIT' => 'VNQ',
+#     'Target Retirement 2030 Trust I' => 'VTHRX',
+#     'VANGUARD SHORT TERM BOND ETF' => 'BSV',
+#     'VANGUARD SMALL-CAP VIPERS' => 'VB',
+#     'VANGUARD TOTAL INTL STOCK INDEX' => 'VGTSX',
+#     'Vanguard Wellesley Income Adm' => 'VWIAX',
+#     'Victory Inst Diversified Stock' => 'VIDSX',
+#     'William Blair International Growth N' => 'WBIGX',
+#     );
 
-my %AssetClass = (
-    $kCash => $AssetClass::CASH,
-    'ARTKX' => $AssetClass::INTL_STOCK,
-    'ARTQX' => $AssetClass::US_STOCK,
-    'AVPAX' => $AssetClass::US_STOCK,
-    'BEGBX' => $AssetClass::BOND,
-    'BIOPX' => $AssetClass::US_STOCK,
-    'BRK.B' => $AssetClass::US_STOCK,
-    'BSV' =>   $AssetClass::BOND,
-    'BTTRX' => $AssetClass::BOND,
-    'CFICX' => $AssetClass::BOND,
-    'DJP' => $AssetClass::REAL_ASSET,
-    'DODFX' => $AssetClass::INTL_STOCK,
-    'DODGX' => $AssetClass::US_STOCK,
-    'EILVX' => $AssetClass::US_STOCK,
-    'ETRUX' => $AssetClass::US_STOCK,
-    'FAIRX' => $AssetClass::INTL_STOCK | $AssetClass::US_STOCK,
-    'FBRSX' => $AssetClass::US_STOCK,
-    'FFSCX' => $AssetClass::US_STOCK,
-    'FXI'   => $AssetClass::INTL_STOCK,
-    'GLD' => $AssetClass::REAL_ASSET,
-    'GMF'   => $AssetClass::INTL_STOCK,
-    'HAINX' => $AssetClass::INTL_STOCK,
-    'HSVZX' => $AssetClass::US_STOCK,
-    'ISLCX' => $AssetClass::US_STOCK,
-    'JASCX' => $AssetClass::US_STOCK,
-    'JMCVX' => $AssetClass::US_STOCK,
-    'LSGLX' => $AssetClass::BOND,
-    'MGC' => $AssetClass::US_STOCK,
-    'MSSFX' => $AssetClass::US_STOCK,
-    'NAMAX' => $AssetClass::US_STOCK,
-    'NVLIX' => $AssetClass::US_STOCK,
-    'PTTRX' => $AssetClass::BOND,
-    'RGAEX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    'RISIX' => $AssetClass::INTL_STOCK,
-    'RSVAX' => $AssetClass::US_STOCK,
-    'RYVPX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    'SASPX' => $AssetClass::INTL_STOCK,
-    'SCUIX' => $AssetClass::US_STOCK,
-    'SEQUX' => $AssetClass::US_STOCK,
-    'SIGVX' => $AssetClass::CASH,
-    'SPY'   => $AssetClass::US_STOCK,
-    'SSREX' => $AssetClass::US_STOCK,
-    'SWHFX' => $AssetClass::US_STOCK,
-    'SWPPX' => $AssetClass::US_STOCK,
-    'TAREX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    'TAVFX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    'TILCX' => $AssetClass::US_STOCK,
-    'TRMCX' => $AssetClass::US_STOCK,
-    'TRP' => $AssetClass::INTL_STOCK,
-    'TWCVX' => $AssetClass::US_STOCK,
-    'UMBIX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    'UMBWX' => $AssetClass::INTL_STOCK,
-    'VAIPX' => $AssetClass::BOND,
-    'VAW'   => $AssetClass::US_STOCK,
-    'VB' => $AssetClass::US_STOCK,
-    'VBILX' => $AssetClass::BOND,
-    'VCAIX' => $AssetClass::BOND,
-    'VCVSX' => $AssetClass::BOND,
-    'VDE' =>   $AssetClass::US_STOCK,
-    'VEIEX' => $AssetClass::INTL_STOCK,
-    'VEU' => $AssetClass::INTL_STOCK,
-    'VEMAX' => $AssetClass::INTL_STOCK,
-    'VEXMX' => $AssetClass::US_STOCK,
-    'VFIDX' => $AssetClass::BOND,
-    'VFIAX' => $AssetClass::US_STOCK,
-    'VFIJX' => $AssetClass::BOND,
-    'VFSVX' => $AssetClass::INTL_STOCK,
-    'VFWAX' => $AssetClass::INTL_STOCK,
-    'VFWIX' => $AssetClass::INTL_STOCK,
-    'VGENX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    'VGTSX' => $AssetClass::INTL_STOCK,
-    'VHGEX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    'VIDSX' => $AssetClass::US_STOCK,
-    'VIFSX' => $AssetClass::US_STOCK,
-    'VIG' =>   $AssetClass::US_STOCK,
-    'VIMAX' => $AssetClass::US_STOCK,
-    'VIMSX' => $AssetClass::US_STOCK,
-    'VIPSX' => $AssetClass::BOND,
-    'VISGX' => $AssetClass::US_STOCK,
-    'VISVX' => $AssetClass::US_STOCK,
-    'VMGRX' => $AssetClass::US_STOCK,
-    'VMMXX' => $AssetClass::CASH,
-    'VNQ'   => $AssetClass::US_STOCK,
-    'VO' => $AssetClass::US_STOCK,
-    'VPACX' => $AssetClass::INTL_STOCK,
-    'VSS'   => $AssetClass::INTL_STOCK,
-    'VTHRX' => $AssetClass::INTL_STOCK | $AssetClass::US_STOCK | $AssetClass::BOND,
-    'VUSTX' => $AssetClass::BOND,
-    'VUSUX' => $AssetClass::BOND,
-    'VWEAX' => $AssetClass::BOND,
-    'VWEHX' => $AssetClass::BOND,
-    'VWO'   => $AssetClass::INTL_STOCK,
-    'VXF'   => $AssetClass::US_STOCK,
-    'WBIGX' => $AssetClass::INTL_STOCK,
-    'WWNPX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
-    );
+# my %AssetClass = (
+#     $kCash => $AssetClass::CASH,
+#     'ARTKX' => $AssetClass::INTL_STOCK,
+#     'ARTQX' => $AssetClass::US_STOCK,
+#     'AVPAX' => $AssetClass::US_STOCK,
+#     'BEGBX' => $AssetClass::BOND,
+#     'BIOPX' => $AssetClass::US_STOCK,
+#     'BRK.B' => $AssetClass::US_STOCK,
+#     'BSV' =>   $AssetClass::BOND,
+#     'BTTRX' => $AssetClass::BOND,
+#     'CFICX' => $AssetClass::BOND,
+#     'DJP' => $AssetClass::REAL_ASSET,
+#     'DODFX' => $AssetClass::INTL_STOCK,
+#     'DODGX' => $AssetClass::US_STOCK,
+#     'EILVX' => $AssetClass::US_STOCK,
+#     'ETRUX' => $AssetClass::US_STOCK,
+#     'FAIRX' => $AssetClass::INTL_STOCK | $AssetClass::US_STOCK,
+#     'FBRSX' => $AssetClass::US_STOCK,
+#     'FFSCX' => $AssetClass::US_STOCK,
+#     'FXI'   => $AssetClass::INTL_STOCK,
+#     'GLD' => $AssetClass::REAL_ASSET,
+#     'GMF'   => $AssetClass::INTL_STOCK,
+#     'HAINX' => $AssetClass::INTL_STOCK,
+#     'HSVZX' => $AssetClass::US_STOCK,
+#     'ISLCX' => $AssetClass::US_STOCK,
+#     'JASCX' => $AssetClass::US_STOCK,
+#     'JMCVX' => $AssetClass::US_STOCK,
+#     'LSGLX' => $AssetClass::BOND,
+#     'MGC' => $AssetClass::US_STOCK,
+#     'MSSFX' => $AssetClass::US_STOCK,
+#     'NAMAX' => $AssetClass::US_STOCK,
+#     'NVLIX' => $AssetClass::US_STOCK,
+#     'PTTRX' => $AssetClass::BOND,
+#     'RGAEX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     'RISIX' => $AssetClass::INTL_STOCK,
+#     'RSVAX' => $AssetClass::US_STOCK,
+#     'RYVPX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     'SASPX' => $AssetClass::INTL_STOCK,
+#     'SCUIX' => $AssetClass::US_STOCK,
+#     'SEQUX' => $AssetClass::US_STOCK,
+#     'SIGVX' => $AssetClass::CASH,
+#     'SPY'   => $AssetClass::US_STOCK,
+#     'SSREX' => $AssetClass::US_STOCK,
+#     'SWHFX' => $AssetClass::US_STOCK,
+#     'SWPPX' => $AssetClass::US_STOCK,
+#     'TAREX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     'TAVFX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     'TILCX' => $AssetClass::US_STOCK,
+#     'TRMCX' => $AssetClass::US_STOCK,
+#     'TRP' => $AssetClass::INTL_STOCK,
+#     'TWCVX' => $AssetClass::US_STOCK,
+#     'UMBIX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     'UMBWX' => $AssetClass::INTL_STOCK,
+#     'VAIPX' => $AssetClass::BOND,
+#     'VAW'   => $AssetClass::US_STOCK,
+#     'VB' => $AssetClass::US_STOCK,
+#     'VBILX' => $AssetClass::BOND,
+#     'VCAIX' => $AssetClass::BOND,
+#     'VCVSX' => $AssetClass::BOND,
+#     'VDE' =>   $AssetClass::US_STOCK,
+#     'VEIEX' => $AssetClass::INTL_STOCK,
+#     'VEU' => $AssetClass::INTL_STOCK,
+#     'VEMAX' => $AssetClass::INTL_STOCK,
+#     'VEXMX' => $AssetClass::US_STOCK,
+#     'VFIDX' => $AssetClass::BOND,
+#     'VFIAX' => $AssetClass::US_STOCK,
+#     'VFIJX' => $AssetClass::BOND,
+#     'VFSVX' => $AssetClass::INTL_STOCK,
+#     'VFWAX' => $AssetClass::INTL_STOCK,
+#     'VFWIX' => $AssetClass::INTL_STOCK,
+#     'VGENX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     'VGTSX' => $AssetClass::INTL_STOCK,
+#     'VHGEX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     'VIDSX' => $AssetClass::US_STOCK,
+#     'VIFSX' => $AssetClass::US_STOCK,
+#     'VIG' =>   $AssetClass::US_STOCK,
+#     'VIMAX' => $AssetClass::US_STOCK,
+#     'VIMSX' => $AssetClass::US_STOCK,
+#     'VIPSX' => $AssetClass::BOND,
+#     'VISGX' => $AssetClass::US_STOCK,
+#     'VISVX' => $AssetClass::US_STOCK,
+#     'VMGRX' => $AssetClass::US_STOCK,
+#     'VMMXX' => $AssetClass::CASH,
+#     'VNQ'   => $AssetClass::US_STOCK,
+#     'VO' => $AssetClass::US_STOCK,
+#     'VPACX' => $AssetClass::INTL_STOCK,
+#     'VSS'   => $AssetClass::INTL_STOCK,
+#     'VTHRX' => $AssetClass::INTL_STOCK | $AssetClass::US_STOCK | $AssetClass::BOND,
+#     'VUSTX' => $AssetClass::BOND,
+#     'VUSUX' => $AssetClass::BOND,
+#     'VWEAX' => $AssetClass::BOND,
+#     'VWEHX' => $AssetClass::BOND,
+#     'VWO'   => $AssetClass::INTL_STOCK,
+#     'VXF'   => $AssetClass::US_STOCK,
+#     'WBIGX' => $AssetClass::INTL_STOCK,
+#     'WWNPX' => $AssetClass::US_STOCK | $AssetClass::INTL_STOCK,
+#     );
+
+my %Tickers;
 
 my $TickersBySymbol = {};
 my $TickersByName = {};
 
-my %SymbolToName = ();
+&InitializeFromCsv('ticker-info.csv');
 
-foreach my $k ( sort keys %Tickers ) {
-    $SymbolToName{$Tickers{$k}} = $k;
+#-----------------------------------------------------------------
+# Methods
+#-----------------------------------------------------------------
+
+sub InitializeFromCsv {
+    my ($fname) = @_;
+
+    $gDebug && print "Try to read $fname\n";
+    my $csv = Text::CSV_XS->new ({ binary => 1, eol => $/ });
+    if ( open my $io, "<", $fname ) {
+
+	# The rest of the header names act as hash indices
+	my $header = $csv->getline ($io);
+	if ($header->[0] ne "_ticker"
+	    || $header->[1] ne "_name"  
+	    || $header->[2] ne "_skip" ) {
+	    print "Header incorrect in $fname\n";
+	    return;
+	}
+    
+	while (my $row = $csv->getline($io)) {
+#	    print "\"", join(", ", @{ $row }), "\"\n";
+	    my $symbol = $row->[0];
+	    my $name = $row->[1];
+
+	    # Local skip overrides the spreadsheet value.
+	    my $skip = (defined($Skip{$name}));
+	    $skip = $row->[2] unless ($skip);
+	
+	    my $ticker = Ticker->new($name, $symbol, $skip);
+	    my $last_row_index = scalar(@{ $row })-1;
+	    foreach my $i (3 .. $last_row_index) {
+		$ticker->{$header->[$i]} = $row->[$i];
+	    }
+	}
+    }
 }
 
 sub new
@@ -404,6 +463,7 @@ sub new
 	_name => shift,   # Must be defined
         _symbol => shift, # Must be defined
         _skip  => shift,  # Must be defined
+	# Other attributes are accessed by name
     };
 
     # Must provide name and symbol
@@ -411,9 +471,6 @@ sub new
 	print "** Ticker object must provide symbol and name.\n";
 	die "";
     }
-
-    # Set asset specific info from internal sources
-    $self->{_assetClass} = $AssetClass{$self->{_symbol}};
 
     bless $self, $class;
     $TickersBySymbol->{ $self->{_symbol} } = $self;
@@ -424,6 +481,7 @@ sub new
 sub name { $_[0]->{_name}; }
 sub symbol { $_[0]->{_symbol}; }
 sub skip { $_[0]->{_skip}; }
+sub attribute { $_[0]->{$_[1]}; }
 
 sub getByName
 {
@@ -445,6 +503,9 @@ sub getByName
 	# Will skip most stuff for this ticker
 	$symbol = $gUnknown;
     } else {
+	if (ref($name) ne '') {
+	    die "$name shouldn't be a ref";
+	}
 	my $msg = "** Add the following to \%Tickers or "
 	    . "\%Skip in Ticker.pm\n"
 	    . "    '" . $name . "' => '',\n";
@@ -459,10 +520,10 @@ sub getBySymbol
     my $symbol = shift;
 
     # Get the Name for this symbol
-    if ( !defined($SymbolToName{$symbol})) {
+    if ( !defined($TickersBySymbol->{$symbol})) {
 	die "Add Symbol \"$symbol\" to Ticker.pm";
     }
-    return Ticker::getByName($SymbolToName{$symbol});
+    return $TickersBySymbol->{$symbol};
 }
 
 sub printToStringArray

@@ -4,6 +4,7 @@
 
 package Holding;
 use Account;
+use AssetCategory;
 use Ticker;
 use Transactions;
 use Transaction;
@@ -28,6 +29,9 @@ sub new
 
 	# Ref to Account object.  May be undef.
 	_inAccount => shift,     
+
+	# Ref to AssetCategory object.  May be undef.
+	_assetCategory => shift,     
 
 	# Ref to array of Transaction objects (will be created if
 	# undef)
@@ -62,6 +66,7 @@ sub newDeepCopy
     return Holding->new(
 	$self->ticker(),
 	$self->inAccount(),
+	$self->assetCategory(),
 	$self->transactions()->newDeepCopy(),
 	$self->shares(),
 	$self->price(),
@@ -79,6 +84,7 @@ sub newDeepCopy
 sub ticker { $_[0]->{_ticker}; }
 sub symbol { $_[0]->{_ticker}->symbol(); }
 sub inAccount { $_[0]->{_inAccount}; }
+sub assetCategory { $_[0]->{_assetCategory}; }
 sub transactions { $_[0]->{_transactions}; }
 sub shares { $_[0]->{_shares}; }
 sub price { $_[0]->{_price}; }
@@ -91,6 +97,7 @@ sub myReturn { $_[0]->{_myReturn}; }
 sub hasNewTrans { $_[0]->{_hasNewTrans}; }
 
 sub setInAccount { $_[0]->{_inAccount} = $_[1]; }
+sub setAssetCategory { $_[0]->{_assetCategory} = $_[1]; }
 sub setPrice
 {
     my($self, $price) = @_;

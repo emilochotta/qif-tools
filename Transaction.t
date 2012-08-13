@@ -38,7 +38,7 @@ sub test_newFromQif : Test(34) {
     ok($t1->isa('Transaction'), 'Transaction object isa Transaction');
     is($t1->date(), '11-7-2010', 'date okay');
     is($t1->action(), 'Cash', 'action cash okay');
-    is($t1->symbol(), 'Cash', 'symbol cash okay');
+    is($t1->symbol(), '-Cash-', 'symbol cash okay');
     is($t1->symbol(), $t1->ticker()->symbol(),
        'symbol matches ticker');
     is($t1->amount(), $t1->shares() * $t1->price() + $t1->commision(),
@@ -55,7 +55,7 @@ sub test_newFromQif : Test(34) {
     ok($t1->isa('Transaction'), 'Transaction object isa Transaction');
     is($t1->date(), '11-7-2010', 'date okay');
     is($t1->action(), 'Cash', 'action cash okay');
-    is($t1->symbol(), 'Cash', 'symbol cash okay');
+    is($t1->symbol(), '-Cash-', 'symbol cash okay');
     is($t1->symbol(), $t1->ticker()->symbol(),
        'symbol matches ticker');
     is($t1->amount(), $t1->shares() * $t1->price() + $t1->commision(),

@@ -11,7 +11,7 @@
 package AssetClass;
 require Exporter;
 @ISA = qw(Exporter);
-@EXPORT_OK = qw($US_STOCK, $INTL_STOCK, $BOND, $REAL_ASSET, $CASH);
+@EXPORT_OK = qw($US_STOCK $INTL_STOCK $BOND $REAL_ASSET $CASH);
 
 # Use a bit vec for Morningstar asset classes.
 # Something has to have >25% to be in the category

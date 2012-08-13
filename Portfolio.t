@@ -28,7 +28,7 @@ sub test_newFromQuickenSummaryReport : Test(9) {
     ok(!defined($p->assetAllocation()), 'No asset allocation');
     is(ref($p->holdings()), 'HASH', 'Holdings are a hash');
     my @a = keys %{$p->holdings()};
-    is(scalar(@a), 39, 'Right number of Holdings');
+    is(scalar(@a), 38, 'Right number of Holdings');
     ok($p->holding('BSV')->isa('Holding'), 'Can Get a Holding');
     is($p->holding('BSV')->shares(), 78.66, 'Right number of shares.');
     ok(!defined($p->accounts()), 'No accounts');

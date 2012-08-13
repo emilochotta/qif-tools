@@ -8,7 +8,8 @@ sub new
     my $self = {
 	_name => shift,     # string name of the category.
 	_value => shift,    # number, percent allocation.
-	_symbols => shift,  # Ref to Array of ticker symbols
+	_symbols => shift,  # Ref to Array of ticker symbols,
+	                    # First one is the ideal choice.
     };
     bless $self, $class;
     return $self;

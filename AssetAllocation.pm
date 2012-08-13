@@ -3,12 +3,13 @@ use AssetCategory;
 use Ticker;
 use Text::CSV_XS;
 use strict;
+use warnings;
 
 #-----------------------------------------------------------------
 # Configuration
 #-----------------------------------------------------------------
 
-my $gDebug = 1;
+my $gDebug = 0;
 
 # Used as a prefix on filenames.  
 my $gAssetAllocationPrefix = 'asset-allocation-';
@@ -66,7 +67,7 @@ sub NewFromCsv {
 
 	# handle the asset allocation categories
 	while (my $row = $csv->getline ($io)) {
-#	    print "\"", join(", ", @{ $row }), "\"\n";
+	    print "\"", join(", ", @{ $row }), "\"\n";
 	    my $category = $row->[0];
 	    next if $category eq "";
 	    for my $i (2, 4, 6) {
