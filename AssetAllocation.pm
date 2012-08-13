@@ -12,7 +12,7 @@ use warnings;
 my $gDebug = 0;
 
 # Used as a prefix on filenames.  
-my $gAssetAllocationPrefix = 'asset-allocation-';
+my $gAssetAllocationPrefix = 'quicken/asset-allocation-';
 
 #-----------------------------------------------------------------
 # Methods

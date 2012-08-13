@@ -416,7 +416,7 @@ my %Tickers;
 my $TickersBySymbol = {};
 my $TickersByName = {};
 
-&InitializeFromCsv('ticker-info.csv');
+&InitializeFromCsv('quicken/ticker-info.csv');
 
 #-----------------------------------------------------------------
 # Methods

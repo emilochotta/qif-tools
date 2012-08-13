@@ -22,7 +22,7 @@ use warnings;
 # d.	Save as quicken-portfolio.txt
 # e.	Open in excel
 # f.	Save as quicken-portfolio.csv
-my $gSummaryReportFilename = 'quicken-portfolio.csv';
+my $gSummaryReportFilename = 'quicken/quicken-portfolio.csv';
 my $gSummaryName = 'q_summary';
 
 # Name of a director with quicken transaction files (1 or more).  
