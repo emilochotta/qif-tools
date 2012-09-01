@@ -44,14 +44,14 @@ sub main {
     print "*************************************************************\n";
     print "Reading QIF Account files\n";
     my $rhAccts = Account::newAccountsFromQifDir($gQifDir);
-    foreach my $acct (sort keys %{$rhAccts}) {
-	print "Account ", $acct, "\n";
-	my @lines;
-	$rhAccts->{$acct}->printToStringArray(\@lines,
-					      '',   # Prefix
-					      0);   # Print Transactions
-	print join("\n", @lines), "\n";
-    }
+#     foreach my $acct (sort keys %{$rhAccts}) {
+# 	print "Account ", $acct, "\n";
+# 	my @lines;
+# 	$rhAccts->{$acct}->printToStringArray(\@lines,
+# 					      '',   # Prefix
+# 					      0);   # Print Transactions
+# 	print join("\n", @lines), "\n";
+#     }
     my $rhPortfolios = Portfolio::newPortfoliosFromAccounts(
 	$rhAccts, \%Portfolio::PortfolioDefs);
 
@@ -71,8 +71,11 @@ sub main {
 	next if $p_name eq $gSummaryName;
 	
 	my $portfolio = $rhPortfolios->{$p_name};
-	my $fname = sprintf("out/%s.csv", $portfolio->name());
+	my $fname = sprintf("out/mstar-%s.csv", $portfolio->name());
 	$portfolio->printToMstarCsvFile($fname);
+
+	$fname = sprintf("out/%s.csv", $portfolio->name());
+	$portfolio->printToCsvFile($fname);
 
 	# Only the summary portfolio will have usable prices.
 	$portfolio->copyPrices($q_summary_portfolio);

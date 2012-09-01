@@ -1284,7 +1284,7 @@ sub Sort_Transactions {
     foreach my $r ( 0 .. $numRows ) {
 	$raData->[$r]->{'age'} = &Date_To_Days_Since_2000($raData->[$r]->{'Date'});
 # 	print $raData->[$r]->{'age'}, "\n";
-    }
+    }z
 
     $rhQif->{$ticker} = [ sort { $a->{'age'} <=> $b->{'age'} } @{$raData} ];
 

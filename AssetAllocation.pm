@@ -67,7 +67,7 @@ sub NewFromCsv {
 
 	# handle the asset allocation categories
 	while (my $row = $csv->getline ($io)) {
-	    print "\"", join(", ", @{ $row }), "\"\n";
+	    # print "\"", join(", ", @{ $row }), "\"\n";
 	    my $category = $row->[0];
 	    next if $category eq "";
 	    for my $i (2, 4, 6) {

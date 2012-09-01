@@ -37,6 +37,29 @@ sub appendTransactions
     push @{ $self }, @{ $transactions };
 }
 
+sub prependTransactions
+{
+    my ($self, $transactions) = @_;
+    unshift @{ $self }, @{ $transactions };
+}
+
+sub deleteTransaction
+{
+    my ($self, $transaction) = @_;
+    my $did_something = 0;
+    foreach my $i (0 .. scalar(@{$self})-1) {
+	if ($transaction == $self->[$i]) {
+	    splice(@{$self},$i,1);
+	    $did_something = 1;
+	}
+    }
+    if ( ! $did_something ) {
+	my @strings;
+	$transaction->printToCsvString(\@strings);
+	print "Failed to delete transaction: ", join('',@strings);
+    }
+}
+
 sub printToStringArray
 {
     my($self, $raS, $prefix) = @_;
@@ -64,19 +87,47 @@ sub printToCsvString
     }
 }
 
+sub findTransfersIn
+{
+    my($self) = @_;
+    my $transfers = [];
+    foreach my $transaction (@{ $self }) {
+	if ($transaction->isTransferIn()) {
+	    push @{$transfers}, $transaction;
+	}
+    }
+    return $transfers;
+}
+
+sub findMatchingTransferOut
+{
+    my($self,$transferIn) = @_;
+    {
+	my $length = scalar(@{ $self });
+	my $transaction = $self->[$length - 1];
+	if ($transaction->isMatchingTransferOut($transferIn)) {
+	    return $transaction;
+	}
+    }
+    foreach my $transaction (@{ $self }) {
+	if ($transaction->isMatchingTransferOut($transferIn)) {
+	    return $transaction;
+	}
+    }
+    return undef;
+}
+
 sub computeAllFromTransactions
 {
     my($self,$shares,$price,$estimated,$cost_basis,$gain,
-       $value,$purchases,$my_return,$has_new_trans) = @_;
+       $value,$cash_in,$returned_capital,$my_return,$has_new_trans) = @_;
 
     $$shares = 0;
     $$price = 0 unless defined $$price;
     $$estimated = 0;
     $$cost_basis = 0;
-    $$gain = 0;
-    $$value = 0;
-    $$purchases = 0;
-    $$my_return = 0;
+    $$cash_in = 0;
+    $$returned_capital = 0;
     
     foreach my $transaction ( @{ $self } ) {
 	$transaction->computeAllFromTransactions(
@@ -86,10 +137,12 @@ sub computeAllFromTransactions
 	    $cost_basis,
 	    $gain,
 	    $value,
-	    $purchases,
+	    $cash_in,
+	    $returned_capital,
 	    $my_return,
 	    );
     }
+#    printf(STDERR "Total Returned Capital: %f\n", $$returned_capital);
 
     $$has_new_trans = 0;
 }

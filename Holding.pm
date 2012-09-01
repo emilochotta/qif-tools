@@ -46,8 +46,9 @@ sub new
 	_cost_basis => shift,    # Cost basis
 	_gain => shift,          # Gain = value - cost_basis
 	_value => shift,         # Current value
-	_purchases => shift,     # Purchases - Withdrawls
-	_myReturn => shift,      # Return = value - _purchases
+	_cashIn => shift,        # Purchases - Sales
+	_returnedCapital => shift,  # Capital returned (e.g. cash dividend)
+	_myReturn => shift,      # Return = value + _returnedCap - _cashIn
 	_hasNewTrans => shift,   # There are unprocessed transactions
     };
     if ( !defined( $self->{_transactions} )) {
@@ -74,7 +75,8 @@ sub newDeepCopy
 	$self->cost_basis(),
 	$self->gain(),
 	$self->value(),
-	$self->purchases(),
+	$self->cashIn(),
+	$self->returnedCapital(),
 	$self->myReturn(),
 	$self->hasNewTrans(),
     );
@@ -92,7 +94,8 @@ sub estimated { $_[0]->{_estimated}; }
 sub cost_basis { $_[0]->{_cost_basis}; }
 sub gain { $_[0]->{_gain}; }
 sub value { $_[0]->{_value}; }
-sub purchases { $_[0]->{_purchases}; }
+sub cashIn { $_[0]->{_cashIn}; }
+sub returnedCapital { $_[0]->{_returnedCapital}; }
 sub myReturn { $_[0]->{_myReturn}; }
 sub hasNewTrans { $_[0]->{_hasNewTrans}; }
 
@@ -124,6 +127,22 @@ sub appendHoldingTransactions
 	die "other_holding isn't Holding.\n";
     }
     $self->{_transactions}->appendTransactions($other_holding->{_transactions});
+    $self->computeAllFromTransactions();
+}
+
+sub prependHoldingTransactions
+{
+    my ($self, $other_holding) = @_;
+    if ( !defined($self) ) {
+	die "Self isn't defined.\n";
+    }
+    if ( !defined($other_holding) ) {
+	die "other_holding isn't defined.\n";
+    }
+    if ( ref($other_holding) ne 'Holding') {
+	die "other_holding isn't Holding.\n";
+    }
+    $self->{_transactions}->prependTransactions($other_holding->{_transactions});
     $self->computeAllFromTransactions();
 }
 
@@ -187,6 +206,30 @@ sub printToCsvFile
     close $io;
 }
 
+sub findTransfersIn
+{
+    my($self) = @_;
+    return $self->{_transactions}->findTransfersIn();
+}
+
+sub findMatchingTransferOut
+{
+    my($self,$transferIn) = @_;
+    return $self->{_transactions}->findMatchingTransferOut($transferIn);
+}
+
+sub prependTransactions
+{
+    my($self,$transactions) = @_;
+    return $self->{_transactions}->prependTransactions($transactions);
+}
+
+sub deleteTransaction
+{
+    my($self,$transaction) = @_;
+    return $self->{_transactions}->deleteTransaction($transaction);
+}
+
 sub computeAllFromTransactions
 {
     my($self) = @_;
@@ -197,12 +240,16 @@ sub computeAllFromTransactions
 	\$self->{_cost_basis},
 	\$self->{_gain},
 	\$self->{_value},
-	\$self->{_purchases},
+	\$self->{_cashIn},
+	\$self->{_returnedCapital},
 	\$self->{_myReturn},
 	\$self->{_hasNewTrans}
     );
     $self->{_value} = $self->{_shares} * $self->{_price};
-    printf("Value of %s is %f * %f = %f\n", $self->symbol(),
-	   $self->price(), $self->shares(), $self->value());
+#     printf("Value of %s is %f * %f = %f\n", $self->symbol(),
+# 	   $self->price(), $self->shares(), $self->value());
+    $self->{_gain} = $self->{_value} - $self->{_cost_basis};
+    $self->{_myReturn} =
+	$self->{_value} + $self->{_returnedCapital} - $self->{_cashIn};
 }
 1;

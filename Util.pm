@@ -2,7 +2,7 @@
 package Util;
 require Exporter;
 @ISA = qw(Exporter);
-@EXPORT_OK = qw(writeHashToCsvLine writeCsvLine);
+@EXPORT = qw(writeHashToCsvLine writeCsvLine);
 
 use Text::CSV_XS;
 
@@ -42,7 +42,10 @@ sub printCsv {
 	push @{$raS}, $string;
     } else {
 	my $err = $csv->error_input;
-	die "combine () failed on argument: \"$err\"\n";
+	my $msg = "combine () with error: \"$err\"\n on input \"".
+	    join("\", \"",@{$raFields}). "\"";
+	print STDERR $msg, "\n";
+	push @{$raS}, $string;
     }
 }
 

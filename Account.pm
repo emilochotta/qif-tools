@@ -171,6 +171,11 @@ sub newAccountsFromQifDir {
 	&newFromQif($base, "$dir/$file");
     }
     closedir DIR;
+
+    # Perform account level transformations, like replacing "transfer
+    # in kind" operations.
+    &optimize();
+    
     return $gAccountsByName;
 }
 
@@ -192,7 +197,7 @@ sub newFromQif
 	$account = $gAccountsByName->{$account_name};
 	$holdings = $account->{_holdings};
     } else {
-	$gDebug && print("Creating new account $account_name\n");
+	$gDebug && print("  Creating new account $account_name\n");
 	$holdings = {};
 	$account = Account->new(
 	    $account_name,
@@ -202,8 +207,9 @@ sub newFromQif
 	    );
     }
 
+    my $count = 0;
     while ( my $record = $qif->next ) {
-	my $transaction = Transaction::newFromQifRecord($record);
+	my $transaction = Transaction::newFromQifRecord($record, $account_name);
 	if (defined($transaction)) {
 
 	    # Create a new holding if needed.
@@ -215,15 +221,137 @@ sub newFromQif
 	    }
 
 	    # Finally append the transaction to the holding.
-	    $transaction->setAccount($account_name);
 	    $holdings->{$symbol}->appendTransaction($transaction);
+	    $count++;
 	}
     }
-    
-    foreach my $symbol ( sort keys %{ $holdings } ) {
+    $gDebug && printf("  Read %d transactions\n", $count); 
+    foreach my $symbol ( keys %{ $holdings } ) {
 	$holdings->{$symbol}->computeAllFromTransactions();
     }
     return $account;
+}
+
+sub optimize
+{
+    &handleTransferInKind();
+}
+
+# We actually move the transactions from the source account to the
+# destination account, removing the transfer transactions.
+
+# TODO: This is N-squared, but could probably be improved with
+# memoization or the like.
+sub handleTransferInKind
+{
+    # First look for each transfer-in and try to find a matching transfer out.
+    my @transfers;
+    foreach my $acct_name (keys %{$gAccountsByName}) {
+	my $acct = $gAccountsByName->{$acct_name};
+	foreach my $symbol (keys %{$acct->holdings()}) {
+	    my $holding = $acct->holding($symbol);
+	    if (! $holding->ticker()->skip()) {
+		foreach my $transfer ( @{$holding->findTransfersIn()} ) {
+# 		    my @strings;
+# 		    $transfer->printToCsvString(\@strings);
+# 		    print STDERR "Found Transfer In: ", join('',@strings);
+
+		    push @transfers, $acct->handleTransferIn($holding, $transfer);
+		}
+	    }
+	}
+    }
+    # After we've found all the transfers, do the moves.  Otherwise,
+    # if there are more than one transfer of a holding (like
+    # transfering lots), we won't be able to find the matching
+    # transaction.
+    foreach my $transfer (@transfers) {
+	if (defined($transfer)) {
+	    $transfer->{'acctIn'}->moveMatchingTransactions(
+		$transfer->{'holding'},
+		$transfer->{'transferIn'},
+		$transfer->{'acctOut'},
+		$transfer->{'transferOut'});
+	}
+    }
+}
+
+sub handleTransferIn
+{
+    my($self, $holding, $transferIn) = @_;
+
+    my $transferOut;
+    my $acctOut;
+    foreach my $acct_name (keys %{$gAccountsByName}) {
+	my $acct = $gAccountsByName->{$acct_name};
+	next if ($self == $acct);
+	# print STDERR "Looking for Matching Transfer Out in: ", $acct->name(), "\n";
+	if (defined($acct->holdings()->{$holding->symbol()})) {
+	    $transferOut = $acct->holding($holding->symbol())->
+		findMatchingTransferOut($transferIn);
+	    if (defined($transferOut)) {
+		$acctOut = $acct;
+		last;
+	    }
+	}
+    }   
+    if (!defined($transferOut)) {
+	my @strings;
+	$transferIn->printToCsvString(\@strings);
+	print "No Matching Transfer Out For: ", join('',@strings);
+	return undef;
+    } else {
+	return {
+	    'acctIn' => $self,
+	    'holding' => $holding,
+	    'transferIn' => $transferIn,
+	    'acctOut' => $acctOut,
+	    'transferOut' => $transferOut};
+    }
+}
+
+sub moveMatchingTransactions
+{
+    my ($self, $holding, $transferIn, $acctOut, $transferOut) = @_;
+
+    # Should be able to move the entire holding.
+    # Sanity Check:
+    if (!defined($acctOut->holdings()->{$holding->symbol()})) {
+# 	printf("WARNING: matching holding is gone. Must be more than one transfer for %s in %s\n",
+# 	       $holding->symbol(), $self->name());
+# 	my @strings;
+# 	$transferOut->printToCsvString(\@strings);
+# 	print "Transfer Out: ", join('',@strings);
+# 	my @strings2;
+# 	$transferIn->printToCsvString(\@strings2);
+# 	print "Transfer In: ", join('',@strings2);
+	return;
+    }
+    
+    # Sanity Check:
+    if ($acctOut->holding($holding->symbol())->shares() > 2.0) {
+	printf("ERROR: There are still %f shares of %s in %s\n",
+	       $holding->shares(), $holding->symbol(), $self->name());
+	my @strings;
+	$transferOut->printToCsvString(\@strings);
+	print "Transfer Out: ", join('',@strings);
+	my @strings2;
+	$transferIn->printToCsvString(\@strings2);
+	print "Transfer In: ", join('',@strings2);
+	return;
+    }
+
+    # Move the transactions.
+    $holding->prependHoldingTransactions($acctOut->holding($holding->symbol()));
+
+    # Delete the holding from the account they moved from.
+    delete $acctOut->holdings()->{$holding->symbol()};
+
+    # Remove the transfers.
+    # Not really necessary, and tricky to get right in the case where there
+    # are more than one move for a given holding.
+#    $holding->deleteTransaction($transferIn);
+#    $holding->deleteTransaction($transferOut);
 }
 
 sub value

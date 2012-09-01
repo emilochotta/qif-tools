@@ -17,7 +17,7 @@ sub test_new : Test(2) {
 };
 
 # Test creation from QIF record.
-sub test_newFromQif : Test(34) {
+sub test_newFromQif : Test(36) {
     # Cash transaction
     my $t1 = Transaction::newFromQifRecord( {
 	'account' => '[Van Brokerage]',
@@ -105,38 +105,41 @@ sub test_newFromQif : Test(34) {
 	'security' => 'VANGUARD MID CAP ETF',
 	'status' => 'R',
 	'total' => '510',
-	'transaction' => '510', } );
+	'transaction' => '510', }, 'test_account' );
     ok(defined($t3), 'Transaction object was created');
     ok($t3->isa('Transaction'), 'Transaction object isa Transaction');
     is($t3->date(), '12-31-2010', 'date okay');
+    is($t3->age(), '4414', 'age okay');
     is($t3->action(), 'ReinvDiv', 'action reinvdiv okay');
     is($t3->symbol(), 'VO', 'symbol okay');
     is($t3->symbol(), $t3->ticker()->symbol(),
        'symbol matches ticker');
-    is($t3->symbol(), $t3->ticker()->symbol(),
-       'symbol matches ticker');
     is($t3->amount(), $t3->shares() * $t3->price() + $t3->commision(),
        'amount was shares*price + commision');
+    is($t3->totalShares(), 0,
+       'running total shares was 0');
+    is($t3->account(), 'test_account', 'account name');
     
     is_deeply($t3->scalarFields, 
 	      [ 
 		'_account', 
 		'_action', 
+		'_age', 
 		'_amount', 
 		'_commision', 
 		'_date', 
-		'_file', 
 		'_mAction', 
 		'_name', 
 		'_price', 
-		'_running',
 		'_shares', 
-		'_symbol', ],
+		'_symbol',
+		'_totalShares',
+	      ],
 	      'Scalar Fields');
 
      my $raS = [];
      $t3->printToCsvString($raS);
-     is($raS->[0], ",ReinvDiv,510,10,12-31-2010,,ReinvDiv,\"VANGUARD MID CAP ETF\",5,,100,VO\n",
+     is($raS->[0], "test_account,ReinvDiv,4414,510,10,12-31-2010,ReinvDiv,\"VANGUARD MID CAP ETF\",5,100,VO,0\n",
         'Formated as CSV');
 
     # Tickers should be reused.

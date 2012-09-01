@@ -10,7 +10,7 @@ use strict;
 use warnings;
 
 # a test method that runs 1 test
-sub test_new : Test(29) {
+sub test_new : Test(30) {
     my $t2 = Transaction::newFromQifRecord( {
 	'action' => 'Buy',
 	'date' => "11/ 8'10",
@@ -72,7 +72,8 @@ sub test_new : Test(29) {
     is($h->cost_basis(), $h2->cost_basis(), "cost_basis matches");
     is($h->gain(), $h2->gain(), "gain matches");
     is($h->value(), $h2->value(), "value matches");
-    is($h->purchases(), $h2->purchases(), "purchases matches");
+    is($h->cashIn(), $h2->cashIn(), "Cash In matches");
+    is($h->returnedCapital(), $h2->returnedCapital(), "returned Capital matches");
     is($h->myReturn(), $h2->myReturn(), "myReturn matches");
     is($h->hasNewTrans(), $h2->hasNewTrans(), "hasNewTrans matches");
     

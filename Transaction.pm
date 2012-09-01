@@ -6,7 +6,7 @@
 package Transaction;
 require Exporter;
 @ISA = qw(Exporter);
-@EXPORT_OK = qw(@MstarHeaders %MstarMap $gAccount);
+@EXPORT_OK = qw(@MstarHeaders %MstarMap $gAccount &scalarFields);
 
 use Finance::QIF;
 use Text::CSV_XS;
@@ -82,14 +82,18 @@ our %Actions = (
     'CGShortX' => 'CGShortX',
     'ContribX' => '',
     'CvrShrt' => 'CvrShrt',
+    'CvrShrtX' => 'CvrShrt',
     'Div' => 'Div',
     'DivX' => 'Div',
     'Exercise' => 'Exercise',
     'Expire' => '',
     'Grant' => '',
     'IntInc' => 'IntInc',
+    'IntIncX' => 'IntInc',
     'MargInt' => 'MargInt',
+    'MargIntX' => 'MargInt',
     'MiscExpX' => 'MiscExpX',
+    'MiscIncX' => 'MiscIncX',
     'ReinvDiv' => 'ReinvDiv',
     'ReinvLg' => 'ReinvLg',
     'ReinvSh' => 'ReinvSh',
@@ -97,6 +101,7 @@ our %Actions = (
     'ShrsIn' => 'ShrsIn',
     'ShrsOut' => 'ShrsOut',
     'ShtSell' => 'ShtSell',
+    'ShtSellX' => 'ShtSell',
     'StkSplit' => 'StkSplit',
     'Sell' => 'Sell',
     'Vest' => '',
@@ -122,14 +127,15 @@ sub new
 	_name => shift,       # Must be defined
 	_ticker => shift,     # Must be defined
 	_symbol => shift,     # Must be defined
-	_account => shift,    # Account name
+	_account => shift,    # Account name in which this transaction
+			      # was found. May be undefined.
 	_price => shift,
 	_shares => shift,
 	_commision => shift,
 	_amount => shift,
 	_mAction => shift,    # Morningstar equivalent action
-	_file => shift,
-	_running => shift,
+	_age => shift,        # Days since 2000-Jan-01
+	_totalShares => shift,  # Running total of shares in this Holding
     };
     bless $self, $class;
     return $self;
@@ -157,8 +163,8 @@ sub price { $_[0]->{_price}; }
 sub shares { $_[0]->{_shares}; }
 sub commision { $_[0]->{_commision}; }
 sub amount { $_[0]->{_amount}; }
-sub file { $_[0]->{_file}; }
-sub running { $_[0]->{_running}; }
+sub age { $_[0]->{_age}; }
+sub totalShares { $_[0]->{_totalShares}; }
 sub mAction { $_[0]->{_mAction}; }
 
 sub setAccount { $_[0]->{_account} = $_[1]; }
@@ -186,7 +192,9 @@ sub setAccount { $_[0]->{_account} = $_[1]; }
 
 sub newFromQifRecord
 {
-    my $record = shift;
+    my ($record, $account) = @_;
+
+    # $gDebug = 1 if ($account eq 'schwab-emil');
 
     $gDebug && print("Record: \n");
     foreach my $k ( sort keys %{ $record } ) {
@@ -215,10 +223,10 @@ sub newFromQifRecord
 #      transaction = 8543.80
 
     my $date;
+    my $age;
     my $action;
     my $name;
     my $ticker;
-    my $account;
     my $price;
     my $shares;
     my $commission;
@@ -226,6 +234,7 @@ sub newFromQifRecord
     my $mAction;
     
     $date = &ConvertQifDate($record->{'date'});
+    $age = &DateToDaysSince2000($date);
     $action = $record->{'action'};
     if ( !defined($Actions{$action}) ) {
 	die "Action \"$action\" unknown\n";
@@ -258,6 +267,11 @@ sub newFromQifRecord
 	    $gDebug && print("Transaction has no security name.\n");
 	    return undef;
 	}
+	if ( ($action eq 'ShrsIn' || $action eq 'ShrsInX') &&
+	     !defined($record->{'quantity'}) ) {
+	    $gDebug && print("ShrsIn Transaction has no shares.\n");
+	    return undef;
+	}
 	$name = $record->{'security'};
 	$price = $record->{'price'} if
 	    defined $record->{'price'};
@@ -273,8 +287,8 @@ sub newFromQifRecord
     $commission = 0;
     $commission = $record->{'commission'} if defined $record->{'commission'};
     
-    $account = $record->{'account'} if defined $record->{'account'};
-    
+    $gDebug = 0 if ($account eq 'schwab-emil');
+
     return Transaction->new(
 	$date,
 	$action,
@@ -286,7 +300,9 @@ sub newFromQifRecord
 	$shares,
 	$commission,
 	$amount,
-	$mAction);
+	$mAction,
+	$age,
+	0);
 }
 
 sub ConvertQifDate
@@ -345,6 +361,7 @@ sub printToCsvString
        $isMstar,       # In: Apply morningstar rules.
 	) = @_;
 
+    $isMstar = 0 unless defined $isMstar;
     my $skip = $self->ticker()->skip()
 	|| ($isMstar && $self->shares() == 0)
 	|| ($isMstar && $self->mAction() eq '');
@@ -355,61 +372,136 @@ sub printToCsvString
     }
 }
 
+sub isTransferIn
+{
+    my($self) = @_;
+    return 0 if ($self->ticker()->skip());
+    return ($self->{_action} eq 'ShrsIn') || ($self->{_action} eq 'XIn');
+}
+
+sub isMatchingTransferOut
+{
+    my($self,$transferIn) = @_;
+    return 0 if ($self->ticker()->skip());
+    return 0 unless ($self->{_action} eq 'ShrsOut' || $self->{_action} eq 'XOut');
+    # Date has to be less than 2 weeks apart
+    return 0 unless (abs($self->age() - $transferIn->age()) < 14);
+    return 0 unless ($self->shares() == $transferIn->shares());
+    return 1;
+}
+
 sub computeAllFromTransactions
 {
+    # Compute shares, cost_basis, cash_in, returned_capital
     my($self,$shares,$price,$estimated,$cost_basis,$gain,
-       $value,$purchases,$my_return) = @_;
+       $value,$cash_in,$returned_capital,$my_return) = @_;
 
+    return if ($self->ticker()->skip());
     my $action = $self->{_action};
 
-    if ($action eq 'Buy') {
+    if ($action eq 'Buy' || $action eq 'BuyX'
+	|| $action eq 'CvrShrt' || $action eq 'CvrShrtX') {
 	$$shares += $self->{_shares};
-    } elsif ($action eq 'BuyX') {
-	$$shares += $self->{_shares};
+	$$cost_basis += $self->{_amount};
+	$$cash_in += $self->{_amount};
     } elsif ($action eq 'Cash') {
-    } elsif ($action eq 'CGLong') {
-    } elsif ($action eq 'CGLongX') {
-    } elsif ($action eq 'CGShort') {
-    } elsif ($action eq 'CGShortX') {
-    } elsif ($action eq 'ContribX') {
-    } elsif ($action eq 'CvrShrt') {
+	# TODO: Figure out what to do with cash transactions.
+    } elsif ($action eq 'CGLong' || $action eq 'CGLongX' ||
+	     $action eq 'CGShort' || $action eq 'CGShortX' ||
+	     $action eq 'Div' || $action eq 'DivX' ||
+	     $action eq 'IntInc' || $action eq 'IntIncX' ||
+	     $action eq 'MiscIncX' ) {
+	$$returned_capital += $self->{_amount};
+# 	printf(STDERR "Returned Capital: %s %s %s %f %f\n", $self->account(),
+# 	       $self->date(), $self->symbol(), $self->amount(),
+# 	       $$returned_capital);
+    } elsif ($action eq 'ReinvDiv'
+	     || $action eq 'ReinvLg'
+	     || $action eq 'ReinvSh') {
 	$$shares += $self->{_shares};
-    } elsif ($action eq 'Div') {
-    } elsif ($action eq 'DivX') {
-    } elsif ($action eq 'Exercise') {
-    } elsif ($action eq 'Expire') {
-    } elsif ($action eq 'Grant') {
-    } elsif ($action eq 'IntInc') {
-    } elsif ($action eq 'MargInt') {
-    } elsif ($action eq 'MiscExpX') {
-    } elsif ($action eq 'ReinvDiv') {
-	$$shares += $self->{_shares};
-    } elsif ($action eq 'ReinvLg') {
-	$$shares += $self->{_shares};
-    } elsif ($action eq 'ReinvSh') {
-	$$shares += $self->{_shares};
-    } elsif ($action eq 'SellX') {
+	$$cost_basis += $self->{_amount};
+    } elsif ($action eq 'Sell'
+	     || $action eq 'SellX'
+	     || $action eq 'ShtSell'
+	     || $action eq 'ShtSellX'
+	) {
+
+	my $avg_cost;
+	if ($$shares > 0) {
+	    # This implements avg cost basis.
+	    $avg_cost = $$cost_basis / $$shares;
+	} else {
+	    print "SALE when there are no shares to sell";
+	    $self->print();
+	    die "SALE when there are no shares to sell";
+	}
+
+	$$cost_basis -= ($avg_cost * $self->{_shares});
+	$$cash_in -= $self->{_amount};
 	$$shares -= $self->{_shares};
-    } elsif ($action eq 'ShrsIn') {
+    } elsif ($action eq 'ShrsIn'
+	     || $action eq 'XIn') {
 	$$shares += $self->{_shares};
-    } elsif ($action eq 'ShrsOut') {
+    } elsif ($action eq 'ShrsOut'
+	     || $action eq 'XOut') {
 	$$shares -= $self->{_shares};
-    } elsif ($action eq 'ShtSell') {
-	$$shares -= $self->{_shares};
-    } elsif ($action eq 'StkSplit') {
-	die "Action \"$action\" NOT SUPPORTED\n";
-    } elsif ($action eq 'Sell') {
-	$$shares -= $self->{_shares};
-    } elsif ($action eq 'Vest') {
-    } elsif ($action eq 'WithdrwX') {
-    } elsif ($action eq 'XIn') {
-	$$shares += $self->{_shares};
-    } elsif ($action eq 'XOut') {
-	$$shares -= $self->{_shares};
+    } elsif ($action eq 'Exercise'
+	     || $action eq 'Expire'
+	     || $action eq 'Vest'
+	     || $action eq 'Grant'
+	     || $action eq 'MargInt'
+	     || $action eq 'MargIntX'
+	     || $action eq 'MiscExpX'
+	) {
+	# Noop
+#    } elsif ($action eq 'StkSplit'
+# 	|| $action eq 'WithdrwX'
+# 	|| $action eq 'ContribX'
+# 	|| $action eq 'MargInt'
     } else {
-	die "Action \"$action\" unknown\n";
+	die "Action \"$action\" NOT SUPPORTED in ComputeAllFromTransactions\n";
     }
-    $gDebug && print("Action \"$action\", Shares \"$$shares\".\n");
+#    $gDebug && print("Action \"$action\", Shares \"$$shares\".\n");
+}
+
+sub DateToDaysSince2000 {
+    my $date = shift;
+    my ($mm,$dd,$yyyy) = ($date =~ /(\d+)-(\d+)-(\d+)/);
+
+   my %DaysPerMonth = (
+    '1' => 31,
+    '2' => 28, # will need leap year correction
+    '3' => 31,
+    '4' => 30,
+    '5' => 31,
+    '6' => 30,
+    '7' => 31,
+    '8' => 31,
+    '9' => 30,
+    '10' => 31,
+    '11' => 30,
+    '12' => 31,
+    );
+
+ #   print $date, "-> mm = $mm, dd = $dd, yyyy = $yyyy  ==> ";
+    my $age = 0;
+    foreach my $y ( 2000 .. $yyyy ) {
+	$age += 365;
+	$age++ if ( &IsLeap($y) );
+    }
+    foreach my $m ( 1 .. $mm ) {
+	$age += $DaysPerMonth{$m};
+    }
+    $age += $dd;
+    return $age;
+}
+
+sub IsLeap {
+    my $y = shift;    # year
+    return 0 if ( $y % 4 != 0 ); # Leap years are divisible by 4
+    return 1 if ( $y % 400 == 0 ); # Any year divisible by 400 is a leap year
+    return 0 if ( $y % 100 == 0 ); # Divisible by 100 (but not 400) isn't a leap year
+    return 1;
 }
 
 1;
