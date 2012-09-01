@@ -8,6 +8,7 @@ use Account;
 use AssetAllocation;
 use AssetCategory;
 use Holding;
+use RebalTran;
 use Ticker qw($kCash);
 use Transaction qw(&scalarFields);
 use Transactions;
@@ -176,9 +177,17 @@ sub new
 	# portfolio against asset allocation.
 	_perHoldingData => shift,
 
+	# Array of transactions for rebalancing.
+	_rebalTrans => shift,
+
 	# Total portfolio value.  Calculated from holdings (not
 	# accounts.)
 	_value => shift,
+
+	# Intermediate value used for rebalancing.  Cash value of sa
+	# les.  Calculated from holdings (not
+	# accounts.)
+	_unallocated => shift,
     };
     if (defined($PortfoliosByName->{$self->{_name}})) {
 	die "A portfolio named $self->{_name} already exists.\n";
@@ -188,6 +197,9 @@ sub new
     }
     if (!defined($self->{_perHoldingData})) {
 	$self->{_perHoldingData} = {};
+    }
+    if (!defined($self->{_rebalTrans})) {
+	$self->{_rebalTrans} = [];
     }
     
     bless $self, $class;
@@ -202,7 +214,9 @@ sub holding { $_[0]->{_holdings}->{$_[1]}; }
 sub accounts { $_[0]->{_accounts}; }
 sub perCatData { $_[0]->{_perCatData}; }
 sub perHoldingData { $_[0]->{_perHoldingData}; }
+sub rebalTrans { $_[0]->{_rebalTrans}; }
 sub value { $_[0]->{_value}; }
+sub unallocated { $_[0]->{_unallocated}; }
 
 sub SetAssetAllocation { $_[0]->{_assetAllocation} = $_[1]; }
 
@@ -578,18 +592,39 @@ sub printRebalanceCsvString
     #  - Unallocated cash
     #  - Resulting portfolio
     
-    push @{$raS}, "\n";
-    my $column_headers = $self->oneLinePortfolioColumnHeaders();
-    &Util::printCsv($column_headers, $csv, $raS);
+    $self->sellHighYieldInTaxableAccount();
 
-    $self->printOneLinePortfolioString(
+    $self->printRebalanceLinesString(
 	$raS,
-	undef,
-	$column_headers,
-	$csv,
-	);
+	$csv);
 }
     
+# The basic analysis was already done (in AnalyzeHoldings). 
+sub sellHighYieldInTaxableAccount {
+    my($self) = @_;
+
+    foreach my $key (sort
+		     { $self->{_perHoldingData}->{$a}->{$kHoldYieldVal}
+		       cmp $self->{_perHoldingData}->{$b}->{$kHoldYieldVal} }
+		     keys %{ $self->{_perHoldingData} }) {
+	my $hold_data = $self->{_perHoldingData}->{$key};
+
+	# Never move a holding from taxable to non taxable if 
+	# there is a capital loss.
+	if ($hold_data->{$kHoldGain} >= 0) {
+	    push @{$self->{_rebalTrans}}, RebalTran::newSale(
+		'High Yield In Taxable Account',  # Reason
+		$hold_data->{$kHoldName},
+		Ticker::getBySymbol($hold_data->{$kHoldTicker}),
+		$hold_data->{$kHoldTicker},
+		$hold_data->{$kHoldAccount},
+		$hold_data->{$kHoldPrice},
+		$hold_data->{$kHoldShares},
+		$self);
+	}
+    }
+}
+
 sub calculateValue {
     my($self) = @_;
 
@@ -851,6 +886,26 @@ sub printTickerLinesString {
     }
 }
 
+sub printRebalanceLinesString {
+    my($self, 
+       $raS,           # Out: Output is written back to this array. 
+       $csv,           # In: A CSV object if you want to reuse one.
+	) = @_;
+
+    push @{$raS}, "\n";
+    my $column_headers = $self->oneLinePortfolioColumnHeaders();
+    &Util::printCsv($column_headers, $csv, $raS);
+
+    foreach my $rebalTran (@{$self->{_rebalTrans}}) {
+	$rebalTran->portfolio()->printOneLinePortfolioString(
+	    $raS,
+	    $rebalTran->transaction(),
+	    $column_headers,
+	    $csv,
+	    );
+    }
+}
+
 # Returns the column headers needed for printOneLinePortfolioString
 sub oneLinePortfolioColumnHeaders {
     my($self) = @_;
@@ -886,6 +941,7 @@ sub printOneLinePortfolioString {
 	unless defined $column_headers;
     my $row = {};
     if (defined $transaction) {
+	
 	$row->{$kRebalKey} = &holdingKey($transaction->symbol(),
 					 $transaction->account());
 	$row->{$kRebalAction} = $transaction->action();

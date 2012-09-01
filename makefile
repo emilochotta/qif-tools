@@ -6,6 +6,7 @@ PM_FILES := \
 	AssetClass.pm \
 	Holding.pm \
 	Portfolio.pm \
+	RebalTran.pm \
 	Ticker.pm \
 	Transaction.pm \
 	Transactions.pm \
