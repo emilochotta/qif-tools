@@ -137,6 +137,14 @@ sub new
 	_age => shift,        # Days since 2000-Jan-01
 	_totalShares => shift,  # Running total of shares in this Holding
     };
+    if (defined($self->{_date}) && ref($self->{_ticker}) ne 'Ticker') {
+	print "ERROR: _ticker argument to Transaction must be a Ticker.\n";
+	printf("  _date = %s\n", $self->{_date});
+	printf("  _action = %s\n", $self->{_action});
+	printf("  _name = %s\n", $self->{_name});
+	printf("  _symbol = %s\n", $self->{_symbol});
+    }
+
     bless $self, $class;
     return $self;
 }

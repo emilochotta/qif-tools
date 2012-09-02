@@ -152,6 +152,23 @@ sub new
     return $self;
 }
 
+sub newDeepCopy
+{
+    my ($self) = @_;
+    my $copy_of_holdings = {};
+    foreach my $symbol (keys %{ $self->{_holdings} }) {
+	$copy_of_holdings->{$symbol} = $self->holding($symbol)->newDeepCopy();
+    }
+    return Account->new(
+	$self->name(),
+	$self->taxable(),
+	$copy_of_holdings,
+	$self->qif_filename(),
+	$self->tax_advantaged(),
+	$self->allowed_tickers(),  # This is const data
+    );
+}
+
 sub name { $_[0]->{_name}; }
 sub taxable { $_[0]->{_taxable}; }
 sub holdings { $_[0]->{_holdings}; }

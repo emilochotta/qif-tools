@@ -24,13 +24,21 @@ sub new {
     my $self = {
 	_transaction => shift,   # Must be defined
 	_portfolio => shift,     # Must be defined
+	_reason => shift,        # May be undef
     };
+    if (ref($self->{_transaction}) ne 'Transaction') {
+	print "ERROR: First argument to RebalTran my be a Transaction.";
+    }
+    if (ref($self->{_portfolio}) ne 'Portfolio') {
+	print "ERROR: _portfolio argument to RebalTran must be a Portfolio.";
+    }
     bless $self, $class;
     return $self;
 }
 
 sub transaction { $_[0]->{_transaction}; }
 sub portfolio { $_[0]->{_portfolio}; }
+sub reason { $_[0]->{_reason}; }
 
 sub newCommon {
     my (
@@ -45,18 +53,22 @@ sub newCommon {
 	$portfolio,
 	) = @_;
 
-    return RebalTran->new(
-      Transaction::new(
-	  $time{'mm-dd-yyyy'},
-	  $action,
-	  $name,
-	  $ticker,
-	  $symbol,
-	  $account_name,
-	  $price,
-	  $shares,
-	),
-	$portfolio);
+    if (ref($ticker) ne 'Ticker') {
+	print "ERROR: $ticker argument to RebalTran::newCommon must be a Ticker.\n";
+    }
+    my $transaction = Transaction->new(
+	$time{'mm-dd-yyyy'},
+	$action,
+	$name,
+	$ticker,
+	$symbol,
+	$account_name,
+	$price,
+	$shares,
+	0,                 # commision
+	$shares * $price,  # amount
+	);
+    return RebalTran->new($transaction, $portfolio, $reason);
 }
 
 sub newSale {
@@ -70,6 +82,9 @@ sub newSale {
 	$shares,
 	$portfolio,
 	) = @_;
+    if (ref($ticker) ne 'Ticker') {
+	print "ERROR: $ticker argument to RebalTran::newSale must be a Ticker.\n";
+    }
     return RebalTran::newCommon(
 	$reason,
 	'Sell',

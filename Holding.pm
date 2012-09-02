@@ -114,6 +114,34 @@ sub appendTransaction
     $self->{_transactions}->append($transaction);
 }
 
+sub applyTransaction
+{
+    my ($self, $transaction) = @_;
+    if (defined($self->transactions())) {
+	$self->{_transactions}->append($transaction);
+	$self->computeAllFromTransactions();
+    } else {
+	my $action = $transaction->action();
+	if ($action eq 'Sell') {
+	    if (defined($self->shares()) && defined($transaction->shares())) {
+		$self->{_shares} -= $transaction->shares();
+	    }
+	    if (defined($transaction->amount())) {
+		$self->{_value} -= $transaction->amount();
+	    }
+	} elsif ($action eq 'Buy') {
+	    if (defined($self->shares()) && defined($transaction->shares())) {
+		$self->{_shares} += $transaction->shares();
+	    }
+	    if (defined($transaction->amount())) {
+		$self->{_value} += $transaction->amount();
+	    }
+	} else {
+	    die "Can't handle transaction action $action";
+	}
+    }
+}
+
 sub appendHoldingTransactions
 {
     my ($self, $other_holding) = @_;

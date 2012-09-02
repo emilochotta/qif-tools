@@ -140,7 +140,9 @@ my $kRebalKey = 'Key';
 my $kRebalAction = 'Action';
 my $kRebalReason = 'Reason';
 my $kRebalShares = 'Shares';
-my $kRebalValue = 'Value';
+my $kRebalAmount = 'Amount';
+my $kRebalValue = 'Invested Value';
+my $kRebalUnallocated = 'Unallocated';
 
 #-----------------------------------------------------------------
 # Global Variables with File Scope
@@ -156,7 +158,7 @@ sub new
 {
     my $class = shift;
     my $self = {
-	_name => shift,             # Must be defined.
+	_name => shift,             # Undefined for dups.
 
 	# May be undefined.
 	_assetAllocation => shift,
@@ -189,7 +191,8 @@ sub new
 	# accounts.)
 	_unallocated => shift,
     };
-    if (defined($PortfoliosByName->{$self->{_name}})) {
+    if (defined($self->{_name}) &&
+	defined($PortfoliosByName->{$self->{_name}})) {
 	die "A portfolio named $self->{_name} already exists.\n";
     }
     if (!defined($self->{_perCatData})) {
@@ -203,8 +206,36 @@ sub new
     }
     
     bless $self, $class;
-    $PortfoliosByName->{$self->{_name}} = $self;
+    if (defined($self->{_name})) {
+	$PortfoliosByName->{$self->{_name}} = $self;
+    }
     return $self;
+}
+
+# Not really a complete deep copy.  Used for duplicates that show the
+# progression of a portfolio as it is rebalanced.
+sub newDeepCopy
+{
+    my ($self) = @_;
+    my $copy_of_holdings = {};
+    foreach my $symbol (keys %{ $self->{_holdings} }) {
+	$copy_of_holdings->{$symbol} = $self->holding($symbol)->newDeepCopy();
+    }
+    my $copy_of_accounts = {};
+    foreach my $acct_name (keys %{ $self->{_accounts} }) {
+	$copy_of_accounts->{$acct_name} = $self->account($acct_name)->newDeepCopy();
+    }
+    return Portfolio->new(
+	undef,                    # Because portfolios are stored in global hash
+	$self->assetAllocation(),
+	$copy_of_holdings,
+	$copy_of_accounts,
+	$self->perCatData(),      # Shallow copy
+	$self->perHoldingData(),  # Shallow copy
+	$self->rebalTrans(),      # Shallow copy
+	$self->value(),
+	$self->unallocated(),
+    );
 }
 
 sub name { $_[0]->{_name}; }
@@ -212,6 +243,7 @@ sub assetAllocation { $_[0]->{_assetAllocation}; }
 sub holdings { $_[0]->{_holdings}; }
 sub holding { $_[0]->{_holdings}->{$_[1]}; }
 sub accounts { $_[0]->{_accounts}; }
+sub account { $_[0]->{_accounts}->{$_[1]}; }
 sub perCatData { $_[0]->{_perCatData}; }
 sub perHoldingData { $_[0]->{_perHoldingData}; }
 sub rebalTrans { $_[0]->{_rebalTrans}; }
@@ -596,7 +628,7 @@ sub printRebalanceCsvString
 
     $self->printRebalanceLinesString(
 	$raS,
-	$csv);
+ 	$csv);
 }
     
 # The basic analysis was already done (in AnalyzeHoldings). 
@@ -605,14 +637,23 @@ sub sellHighYieldInTaxableAccount {
 
     foreach my $key (sort
 		     { $self->{_perHoldingData}->{$a}->{$kHoldYieldVal}
-		       cmp $self->{_perHoldingData}->{$b}->{$kHoldYieldVal} }
+		       <=> $self->{_perHoldingData}->{$b}->{$kHoldYieldVal} }
 		     keys %{ $self->{_perHoldingData} }) {
 	my $hold_data = $self->{_perHoldingData}->{$key};
+
+	next unless ($hold_data->{$kHoldHighDiv});
 
 	# Never move a holding from taxable to non taxable if 
 	# there is a capital loss.
 	if ($hold_data->{$kHoldGain} >= 0) {
-	    push @{$self->{_rebalTrans}}, RebalTran::newSale(
+	    my $starting_portfolio = $self;
+	    my $num_rebalance_steps = scalar(@{$self->{_rebalTrans}});
+	    if ($num_rebalance_steps > 0) {
+		$starting_portfolio =
+		    $self->{_rebalTrans}->[$num_rebalance_steps-1]->portfolio();
+	    }
+	    my $deep_copy = $starting_portfolio->newDeepCopy();
+	    my $rebal_trans = RebalTran::newSale(
 		'High Yield In Taxable Account',  # Reason
 		$hold_data->{$kHoldName},
 		Ticker::getBySymbol($hold_data->{$kHoldTicker}),
@@ -620,7 +661,9 @@ sub sellHighYieldInTaxableAccount {
 		$hold_data->{$kHoldAccount},
 		$hold_data->{$kHoldPrice},
 		$hold_data->{$kHoldShares},
-		$self);
+		$deep_copy);
+	    $deep_copy->applyTransaction($rebal_trans->transaction());
+	    push @{$self->{_rebalTrans}}, $rebal_trans;
 	}
     }
 }
@@ -642,6 +685,31 @@ sub calculateValue {
 sub holdingKey {
     my($symbol, $acct_name) = @_;
     return "$symbol/$acct_name";
+}
+
+sub applyTransaction {
+    my($self, $transaction) = @_;
+    my $action = $transaction->action();
+    if ($action eq 'Sell') {
+	$self->{_unallocated} += $transaction->amount();
+    } elsif ($action eq 'Buy') {
+	$self->{_unallocated} -= $transaction->amount();
+    } else {
+	die "Can't handle transaction action $action";
+    }
+	
+    my $symbol = $transaction->symbol();
+    if (defined($self->holding($symbol))) {
+	$self->holding($symbol)->applyTransaction($transaction);
+    }
+    my $acct_name = $transaction->account();
+    if (defined($self->account($acct_name))) {
+	my $acct = $self->account($acct_name);
+	if (defined($acct->holding($symbol))) {
+	    $acct->holding($symbol)->applyTransaction($transaction);
+	}
+    }
+    $self->calculateValue();
 }
 
 sub analyzeHoldingsAgainstAllocations {
@@ -811,11 +879,20 @@ sub analyzeHoldingsAgainstAllocations {
 	last if ($availableTaxAdvantagedValue < $gZero);
 	my $hold_data = $self->{_perHoldingData}->{$key};
 
-	# Not tax advantaged but there is available space in tax advantaged
-	# accounts to make it so.
-	if ($hold_data->{$kHoldTaxAdvantaged} == 0) {	
-	    $hold_data->{$kHoldBitVec} |= $HIGH_DIVIDEND_TAX;
-	    $hold_data->{$kHoldHighDiv} = 1;
+	# Don't mess with holdings that currently have capital loss,
+	# since tax treatment is unfavorable.  In this case, don't
+	# adjust availableValue either, since we won't put in a tax
+	# advantaged account.
+	if ($hold_data->{$kHoldGain} >= 0) {
+	    # Not tax advantaged but there is available space in tax
+	    # advantaged accounts to make it so.
+	    if ($hold_data->{$kHoldTaxAdvantaged} == 0) {
+		$hold_data->{$kHoldBitVec} |= $HIGH_DIVIDEND_TAX;
+		$hold_data->{$kHoldHighDiv} = 1;
+	    }
+
+	    # Reduce available room whether it's already tax
+	    # advantaged or not.
 	    $availableTaxAdvantagedValue -= $hold_data->{$kHoldValue};
 	}
     }
@@ -877,8 +954,8 @@ sub printTickerLinesString {
 
     # Now write it out
     foreach my $key (sort
-		     { $self->{_perHoldingData}->{$a}->{$kHoldYieldVal}
-		       cmp $self->{_perHoldingData}->{$b}->{$kHoldYieldVal} }
+		     { $self->{_perHoldingData}->{$b}->{$kHoldYieldVal}
+		       <=> $self->{_perHoldingData}->{$a}->{$kHoldYieldVal} }
 		     keys %{ $self->{_perHoldingData} }) {
 	&Util::printHashToCsv($self->{_perHoldingData}->{$key},
 			      $column_headers,
@@ -896,9 +973,17 @@ sub printRebalanceLinesString {
     my $column_headers = $self->oneLinePortfolioColumnHeaders();
     &Util::printCsv($column_headers, $csv, $raS);
 
+    $self->printOneLinePortfolioString(
+	$raS,
+	'Starting Portfolio',
+	undef,
+	$column_headers,
+	$csv,
+	);
     foreach my $rebalTran (@{$self->{_rebalTrans}}) {
 	$rebalTran->portfolio()->printOneLinePortfolioString(
 	    $raS,
+	    $rebalTran->reason(),
 	    $rebalTran->transaction(),
 	    $column_headers,
 	    $csv,
@@ -909,11 +994,14 @@ sub printRebalanceLinesString {
 # Returns the column headers needed for printOneLinePortfolioString
 sub oneLinePortfolioColumnHeaders {
     my($self) = @_;
-    my $column_headers = [ $kRebalAction,
-			   $kRebalKey,
-			   $kRebalReason,
-			   $kRebalShares,
-			   $kRebalValue,
+    my $column_headers = [
+	$kRebalReason,
+	$kRebalKey,
+	$kRebalAction,
+	$kRebalShares,
+	$kRebalAmount,
+	$kRebalValue,
+	$kRebalUnallocated,
 	];
     foreach my $acct_name (sort keys %{$self->accounts()}) {
 	my $acct = $self->accounts()->{$acct_name};
@@ -931,6 +1019,7 @@ sub oneLinePortfolioColumnHeaders {
 sub printOneLinePortfolioString {
     my($self,
        $raS,            # Out: Output is written back to this array. 
+       $reason,         # In: Reason string
        $transaction,    # In: Undef, or transaction that created this portfolio
        $column_headers, # In: If undef, calls oneLinePortfolioColumnHeaders.
        $csv,            # In: A CSV object if you want to reuse one.
@@ -941,14 +1030,18 @@ sub printOneLinePortfolioString {
 	unless defined $column_headers;
     my $row = {};
     if (defined $transaction) {
-	
+	if (ref($transaction) ne 'Transaction') {
+	    print "ERROR: transaction argument must be a Transaction.";
+	}
 	$row->{$kRebalKey} = &holdingKey($transaction->symbol(),
 					 $transaction->account());
 	$row->{$kRebalAction} = $transaction->action();
-	$row->{$kRebalReason} = ''; # $transaction->memo();
 	$row->{$kRebalShares} = $transaction->shares();
-	$row->{$kRebalValue} = $transaction->amount();
+	$row->{$kRebalAmount} = $transaction->amount();
     }
+    $row->{$kRebalReason} = $reason;
+    $row->{$kRebalUnallocated} = $self->unallocated();
+    $row->{$kRebalValue} = $self->value();
     foreach my $acct_name (keys %{ $self->accounts() }) {
 	my $acct = $self->accounts()->{$acct_name};
 	foreach my $symbol (keys %{ $acct->holdings() }) {
