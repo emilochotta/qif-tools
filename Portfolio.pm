@@ -126,6 +126,7 @@ my $kHoldROIC = 'ROIC';  # Return on Invested Capital
 my $kHoldTaxAdvantaged = 'Tax Advantaged';
 my $kHoldYield = 'Yield';
 my $kHoldYieldVal = 'Est Yearly Yield';
+my $kHoldIdealVal = 'Ideal Value';
 my $kHoldBitVec = 'Analysis Bit Vec';
 my $kHoldIdeal = 'Is Ideal';
 my $kHoldOver = 'Over Allocation';
@@ -623,6 +624,9 @@ sub printRebalanceCsvString
     #  - Transaction
     #  - Unallocated cash
     #  - Resulting portfolio
+
+    # Need to handle tickers that are high yield but not taxable,
+    # i.e. muni funds.  Are gov bonds taxable?  Need to check my actual taxes.
     
     $self->sellHighYieldInTaxableAccount();
 
@@ -635,6 +639,7 @@ sub printRebalanceCsvString
 sub sellHighYieldInTaxableAccount {
     my($self) = @_;
 
+    # Sell high yield holdings from taxable accounts
     foreach my $key (sort
 		     { $self->{_perHoldingData}->{$a}->{$kHoldYieldVal}
 		       <=> $self->{_perHoldingData}->{$b}->{$kHoldYieldVal} }
@@ -643,29 +648,64 @@ sub sellHighYieldInTaxableAccount {
 
 	next unless ($hold_data->{$kHoldHighDiv});
 
-	# Never move a holding from taxable to non taxable if 
-	# there is a capital loss.
+	# Never move a holding from taxable to non taxable if there is
+	# a capital loss.  This was also checked in AnalyzeHoldings.
 	if ($hold_data->{$kHoldGain} >= 0) {
-	    my $starting_portfolio = $self;
-	    my $num_rebalance_steps = scalar(@{$self->{_rebalTrans}});
-	    if ($num_rebalance_steps > 0) {
-		$starting_portfolio =
-		    $self->{_rebalTrans}->[$num_rebalance_steps-1]->portfolio();
-	    }
-	    my $deep_copy = $starting_portfolio->newDeepCopy();
-	    my $rebal_trans = RebalTran::newSale(
-		'High Yield In Taxable Account',  # Reason
-		$hold_data->{$kHoldName},
-		Ticker::getBySymbol($hold_data->{$kHoldTicker}),
-		$hold_data->{$kHoldTicker},
-		$hold_data->{$kHoldAccount},
-		$hold_data->{$kHoldPrice},
-		$hold_data->{$kHoldShares},
-		$deep_copy);
-	    $deep_copy->applyTransaction($rebal_trans->transaction());
-	    push @{$self->{_rebalTrans}}, $rebal_trans;
+	    $self->rebalanceSale($hold_data,
+				 'High Yield In Taxable Account');
 	}
     }
+
+    # Now Sell non high yield holdings from non taxable accounts to
+    # make room for them.
+    foreach my $acct_name (keys %{ $self->accounts() }) {
+	my $acct = $self->accounts()->{$acct_name};
+	next unless $acct->tax_advantaged();
+	foreach my $symbol (keys %{ $acct->holdings() }) {
+	    my $key = &holdingKey($symbol, $acct_name);
+	    my $holding = $acct->holdings()->{$symbol};
+	    my $ticker = $holding->ticker();
+	    next if ($ticker->skip());
+	    my $shares = $holding->shares();
+	    next if ($shares < $gZero);
+	    printf("Selling For Rebalance: %s\n", $symbol);
+	    my $hold_data = $self->{_perHoldingData}->{$key};
+
+	    # Only sell holdings that aren't high dividend.
+	    next if ($hold_data->{$kHoldHighDiv});
+
+	    # Okay, get rid of it.
+	    $self->rebalanceSale($hold_data, 
+				 'Low Yield In Tax Advantaged');
+	}
+    }
+}
+
+# Utility for all rebalance sale transactions.
+sub rebalanceSale {
+    my($self, $hold_data, $reason) = @_;
+
+    # The rebalance transaction is relative to the last rebalance
+    # transaction/portfolio already stored in self.  So, need to find
+    # that last one and make a deep copy of it.
+    my $starting_portfolio = $self;
+    my $num_rebalance_steps = scalar(@{$self->{_rebalTrans}});
+    if ($num_rebalance_steps > 0) {
+	$starting_portfolio =
+	    $self->{_rebalTrans}->[$num_rebalance_steps-1]->portfolio();
+    }
+    my $deep_copy = $starting_portfolio->newDeepCopy();
+    my $rebal_trans = RebalTran::newSale(
+	$reason,
+	$hold_data->{$kHoldName},
+	Ticker::getBySymbol($hold_data->{$kHoldTicker}),
+	$hold_data->{$kHoldTicker},
+	$hold_data->{$kHoldAccount},
+	$hold_data->{$kHoldPrice},
+	$hold_data->{$kHoldShares},
+	$deep_copy);
+    $deep_copy->applyTransaction($rebal_trans->transaction());
+    push @{$self->{_rebalTrans}}, $rebal_trans;
 }
 
 sub calculateValue {
@@ -694,6 +734,9 @@ sub applyTransaction {
 	$self->{_unallocated} += $transaction->amount();
     } elsif ($action eq 'Buy') {
 	$self->{_unallocated} -= $transaction->amount();
+	if ( $self->{_unallocated} < 0 ) {
+	    die "Spent more money that we have.";
+	}
     } else {
 	die "Can't handle transaction action $action";
     }
@@ -705,9 +748,7 @@ sub applyTransaction {
     my $acct_name = $transaction->account();
     if (defined($self->account($acct_name))) {
 	my $acct = $self->account($acct_name);
-	if (defined($acct->holding($symbol))) {
-	    $acct->holding($symbol)->applyTransaction($transaction);
-	}
+	$acct->applyRebalanceTransaction($transaction);
     }
     $self->calculateValue();
 }
@@ -837,14 +878,34 @@ sub analyzeHoldingsAgainstAllocations {
 		($acct->tax_advantaged()) ? $value : 0;
 	    $totalTaxAdvantagedValue += $hold_data->{$kHoldTaxAdvantaged};
 	    $hold_data->{$kHoldYield} = $ticker->attribute('Yield');
-	    $hold_data->{$kHoldYieldVal} =
-		$value * $ticker->attribute('Yield') / 100.0;
 	    
 	    my $vec = 0;
 	    if (defined $self->assetAllocation()->symbols()->{$symbol}) {
 		my $cat_name = $hold_data->{$kHoldCategory} = 
 		    $self->assetAllocation()->symbols()->{$symbol}->name();
 		my $cat_data = $self->{_perCatData}->{$cat_name};
+		
+		# Set ideal value to 0 unless this is the first symbol
+		# in this asset category.  If it is the ideal symbol,
+		# then set the value to the new rebalanced value if it
+		# needs to be rebalanced.  Otherwise, keep it's value
+		# as ideal.
+		my $asset_category = 
+		    $self->assetAllocation()->category($cat_name);
+		my $ideal_symbol = $asset_category->symbols()->[0];
+		if ( $symbol ne $ideal_symbol ) {
+		    $hold_data->{$kHoldIdealVal} = 0;
+		} elsif ( $cat_data->{$kCatRebalance} ) {
+		    $hold_data->{$kHoldIdealVal} = 
+			$cat_data->{$kCatTargetValue};
+		} else {
+		    $hold_data->{$kHoldIdealVal} = $value;
+		}
+
+		$hold_data->{$kHoldYieldVal} =
+		    $hold_data->{$kHoldIdealVal} * 
+		    $ticker->attribute('Yield') / 100.0;
+
 		if ($cat_data->{$kCatTargetBuy} < 0) {
 		    $vec |= $OVER_ALLOCATION;
 		    $hold_data->{$kHoldOver} = 1;
@@ -870,7 +931,8 @@ sub analyzeHoldingsAgainstAllocations {
 #    printf("Tax Advantaged total is %f\n", $totalTaxAdvantagedValue);
 
     # Go through holdings by order of yield value and determine which
-    # holdings should be in tax advantaged accounts but aren't.
+    # holdings should be in tax advantaged accounts based on the ideal
+    # value of that holding.
     my $availableTaxAdvantagedValue = $totalTaxAdvantagedValue;
     foreach my $key (sort
 		     { $self->{_perHoldingData}->{$b}->{$kHoldYieldVal}
@@ -892,8 +954,9 @@ sub analyzeHoldingsAgainstAllocations {
 	    }
 
 	    # Reduce available room whether it's already tax
-	    # advantaged or not.
-	    $availableTaxAdvantagedValue -= $hold_data->{$kHoldValue};
+	    # advantaged or not.  Use the ideal value, since 
+	    # we'll want to buy the amount post-rebalancing.
+	    $availableTaxAdvantagedValue -= $hold_data->{$kHoldIdealVal};
 	}
     }
 }
@@ -945,9 +1008,10 @@ sub printTickerLinesString {
 			   $kHoldGain, $kHoldCashIn,
 			   $kHoldReturnedCapital, $kHoldReturn,
 			   $kHoldROIC, $kHoldTaxAdvantaged,
-			   $kHoldYield, $kHoldYieldVal, $kHoldBitVec,
-			   $kHoldIdeal, $kHoldOver, $kHoldHighDiv,
-			   $kHoldCapLoss, $kHoldConsolidate, ];
+			   $kHoldYield, $kHoldIdealVal,
+			   $kHoldYieldVal, $kHoldBitVec, $kHoldIdeal,
+			   $kHoldOver, $kHoldHighDiv, $kHoldCapLoss,
+			   $kHoldConsolidate, ];
 
     push @{$raS}, "\n";
     &Util::printCsv($column_headers, $csv, $raS);
@@ -993,7 +1057,7 @@ sub printRebalanceLinesString {
 
 # Returns the column headers needed for printOneLinePortfolioString
 sub oneLinePortfolioColumnHeaders {
-    my($self) = @_;
+    my($self, $final_portfolio) = @_;
     my $column_headers = [
 	$kRebalReason,
 	$kRebalKey,
@@ -1003,12 +1067,21 @@ sub oneLinePortfolioColumnHeaders {
 	$kRebalValue,
 	$kRebalUnallocated,
 	];
+
     foreach my $acct_name (sort keys %{$self->accounts()}) {
 	my $acct = $self->accounts()->{$acct_name};
+
+	# For accounts that don't easily support moving money in/out,
+	# keep track of the unallocated money separately as well as in
+	# $kRebalUnallocated.
+	if ( $acct->value() > $gZero && $acct->fixed_size() ) {
+	    my $key = sprintf("unalloc %s", $acct->name());
+	    push @{$column_headers}, $key;
+	}
 	foreach my $symbol (sort keys %{ $acct->holdings() }) {
 	    my $key = "$symbol/$acct_name";
 	    my $holding = $acct->holdings()->{$symbol};
-	    if ($holding->value() > 2.0) {
+	    if ($holding->value() > $gZero) {
 		push @{$column_headers}, $key;
 	    }
 	}
@@ -1044,6 +1117,10 @@ sub printOneLinePortfolioString {
     $row->{$kRebalValue} = $self->value();
     foreach my $acct_name (keys %{ $self->accounts() }) {
 	my $acct = $self->accounts()->{$acct_name};
+	if ( $acct->value() > $gZero && $acct->fixed_size() ) {
+	    my $key = sprintf("unalloc %s", $acct->name());
+	    $row->{$key} = $acct->unallocated();
+	}
 	foreach my $symbol (keys %{ $acct->holdings() }) {
 	    my $key = &holdingKey($symbol, $acct_name);
 	    my $holding = $acct->holdings()->{$symbol};

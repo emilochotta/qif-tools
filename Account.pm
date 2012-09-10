@@ -6,6 +6,7 @@ package Account;
 
 use Holding;
 use Finance::QIF;
+use Ticker qw($kCash);
 use strict;
 
 #-----------------------------------------------------------------
@@ -21,36 +22,64 @@ my $gTaxAdvantaged = 'ta';
 # that appear in the asset allocation for this account.
 my $gAllowedTickers = 'at';
 
+# While rebalancing can this account just grow and shrink as need be?
+# e.g. a taxable brokerage account.  Or is the size fixed?
+my $gFixedSize = 'fs';
+
+# Symbol for cash held in this account.  If undefined, then this
+# account can't hold cash.
+my $gCashSymbol = 'cs';
+
 our $gAccountInfo = {
     'account1' => {
 	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => $Ticker::kCash,
     },
     'account2' => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => undef,
     },
     'etrade' => {
 	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => $Ticker::kCash,
     },
     'etrade-5557' => {
 	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => $Ticker::kCash,
     },
     'etrade-ira' => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
     'etrade-joint', => {
 	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => $Ticker::kCash,
     },
     'schwab-annabelle', => {
-	$gTaxAdvantaged => 0,
+	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
     'schwab-bin', => {
-	$gTaxAdvantaged => 1,
+	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => $Ticker::kCash,
     },
     'schwab-bin-ira', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
     'schwab-bin-401k', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => undef,
 	$gAllowedTickers => [
 	    'VBTSX',
 	    'VWENX',
@@ -62,30 +91,48 @@ our $gAccountInfo = {
     },
     'schwab-emil', => {
 	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => $Ticker::kCash,
     },
     'schwab-emil-401k', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => undef,
     },
     'schwab-emil-ira', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
     'schwab-roth-ira', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
     'schwab-shawhu', => {
-	$gTaxAdvantaged => 0,
+	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
     'van-brokerage', => {
 	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => 'VMMXX',
     },
     'van-goog-401k', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => undef,
     },
     'van-mut-funds', => {
 	$gTaxAdvantaged => 0,
+	$gFixedSize => 0,
+	$gCashSymbol => undef,
     },
     'van-rollover-ira', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => undef,
 	$gAllowedTickers => [
 	    'VAIPX',
 	    'VBTSX',
@@ -106,12 +153,18 @@ our $gAccountInfo = {
     },
     'van-roth-brokerage', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => undef,
     },
     'van-roth-mfs', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
     'van-trad-ira-brok', => {
 	$gTaxAdvantaged => 1,
+	$gFixedSize => 1,
+	$gCashSymbol => $Ticker::kCash,
     },
 };
 
@@ -134,7 +187,11 @@ sub new
         _holdings  => shift,    # hash keyed by holding symbol
 	_qif_filename => shift,
 	_tax_advantaged => shift,
+	_fixed_size => shift,
+	_cash_symbol => shift,
 	_allowed_tickers => shift,
+	_unallocated => shift,   # Cash amount temporarily unallocated
+	                         # during rebalancing.
     };
     if (!defined($gAccountInfo->{$self->{_name}})) {
 	die "No info for account $self->{_name}";
@@ -143,9 +200,20 @@ sub new
 	$self->{_tax_advantaged} = 
 	    $gAccountInfo->{$self->{_name}}->{$gTaxAdvantaged};
     }
+    if (!defined($self->{_fixed_size})) {
+	$self->{_fixed_size} = 
+	    $gAccountInfo->{$self->{_name}}->{$gFixedSize};
+    }
+    if (!defined($self->{_cash_symbol})) {
+	$self->{_cash_symbol} = 
+	    $gAccountInfo->{$self->{_name}}->{$gCashSymbol};
+    }
     if (!defined($self->{_allowed_tickers})) {
 	$self->{_allowed_tickers} = 
 	    $gAccountInfo->{$self->{_name}}->{$gAllowedTickers};
+    }
+    if (!defined($self->{_unallocated})) {
+	$self->{_unallocated} = 0;
     }
     bless $self, $class;
     $gAccountsByName->{$self->{_name}} = $self;
@@ -159,14 +227,18 @@ sub newDeepCopy
     foreach my $symbol (keys %{ $self->{_holdings} }) {
 	$copy_of_holdings->{$symbol} = $self->holding($symbol)->newDeepCopy();
     }
-    return Account->new(
+    my $copy = Account->new(
 	$self->name(),
 	$self->taxable(),
 	$copy_of_holdings,
 	$self->qif_filename(),
-	$self->tax_advantaged(),
+	$self->tax_advantaged(),   # This is const data
+	$self->fixed_size(),       # This is const data
+	$self->cash_symbol(),      # This is const data
 	$self->allowed_tickers(),  # This is const data
+	$self->unallocated(),
     );
+    return $copy;
 }
 
 sub name { $_[0]->{_name}; }
@@ -175,7 +247,10 @@ sub holdings { $_[0]->{_holdings}; }
 sub holding { $_[0]->{_holdings}->{$_[1]}; }
 sub qif_filename { $_[0]->{_qif_filename}; }
 sub tax_advantaged { $_[0]->{_tax_advantaged}; }
+sub fixed_size { $_[0]->{_fixed_size}; }
+sub cash_symbol { $_[0]->{_cash_symbol}; }
 sub allowed_tickers { $_[0]->{_allowed_tickers}; }
+sub unallocated { $_[0]->{_unallocated}; }
 
 sub newAccountsFromQifDir {
     my ($dir) = @_;
@@ -364,11 +439,34 @@ sub moveMatchingTransactions
     # Delete the holding from the account they moved from.
     delete $acctOut->holdings()->{$holding->symbol()};
 
-    # Remove the transfers.
-    # Not really necessary, and tricky to get right in the case where there
-    # are more than one move for a given holding.
-#    $holding->deleteTransaction($transferIn);
-#    $holding->deleteTransaction($transferOut);
+    # Remove the transfers.  Not really necessary, and tricky to get
+    # right in the case where there are more than one move for a given
+    # holding.  
+    # $holding->deleteTransaction($transferIn);
+    # $holding->deleteTransaction($transferOut);
+}
+
+# During rebalancing.  If this account has a fixed size (e.g. it is a
+# 401K where the money can't easily be moved in/out), then the money
+# has to be to/from our unallocated slush fund.
+sub applyRebalanceTransaction {
+    my($self, $transaction) = @_;
+    my $action = $transaction->action();
+    if ($action eq 'Sell') {
+	$self->{_unallocated} += $transaction->amount();
+    } elsif ($action eq 'Buy') {
+	$self->{_unallocated} -= $transaction->amount();
+	if ( $self->{_unallocated} < 0 ) {
+	    die "Spent more money that we have.";
+	}
+    } else {
+	die "Can't handle transaction action $action";
+    }
+	
+    my $symbol = $transaction->symbol();
+    if (defined($self->holding($symbol))) {
+	$self->holding($symbol)->applyTransaction($transaction);
+    }
 }
 
 sub value
@@ -380,6 +478,7 @@ sub value
 	    $value += $self->holding($h)->value();
 	}
     }
+    $value += $self->unallocated();
     return $value;
 }
 
