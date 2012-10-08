@@ -6,6 +6,16 @@ require Exporter;
 
 use Text::CSV_XS;
 
+sub minimum {
+    my ($a, $b) = @_;
+    return ($a < $b) ? $a : $b;
+}
+
+sub maximum {
+    my ($a, $b) = @_;
+    return ($a > $b) ? $a : $b;
+}
+
 sub printHashToCsv {
     my $rhLine = shift;        # in: Hash of data
     my $raFieldNames = shift;  # in: Field names to pull out of the hash
@@ -49,4 +59,15 @@ sub printCsv {
     }
 }
 
-
+sub intersect {
+    my ($a, $b) = @_;
+    @union = @intersection = @difference = ();
+    %count = ();
+    foreach $element (@$a, @$b) { $count{$element}++ }
+    foreach $element (keys %count) {
+            push @union, $element;
+            push @{ $count{$element} > 1 ? \@intersection : \@difference }, $element;
+    }
+    return \@intersection;
+}
+	

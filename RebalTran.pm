@@ -98,4 +98,31 @@ sub newSale {
 	);
 }
 
+sub newBuy {
+    my (
+	$reason,
+	$name,
+	$ticker,
+	$symbol,
+	$account_name,
+	$price,
+	$shares,
+	$portfolio,
+	) = @_;
+    if (ref($ticker) ne 'Ticker') {
+	print "ERROR: $ticker argument to RebalTran::newSale must be a Ticker.\n";
+    }
+    return RebalTran::newCommon(
+	$reason,
+	'Buy',
+	$name,
+	$ticker,
+	$symbol,
+	$account_name,
+	$price,
+	$shares,
+	$portfolio,
+	);
+}
+
 1;

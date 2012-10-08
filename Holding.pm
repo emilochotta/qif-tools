@@ -273,8 +273,13 @@ sub computeAllFromTransactions
 	\$self->{_myReturn},
 	\$self->{_hasNewTrans}
     );
+    my $ticker = $self->ticker();
+    if (defined($ticker->attribute('Price'))
+	&& $ticker->attribute('Price') != 0) {
+	$self->{_price} = $ticker->attribute('Price');
+    }
     $self->{_value} = $self->{_shares} * $self->{_price};
-#     printf("Value of %s is %f * %f = %f\n", $self->symbol(),
+#    printf("Value of %s is %f * %f = %f\n", $self->symbol(),
 # 	   $self->price(), $self->shares(), $self->value());
     $self->{_gain} = $self->{_value} - $self->{_cost_basis};
     $self->{_myReturn} =

@@ -81,12 +81,12 @@ our $gAccountInfo = {
 	$gFixedSize => 1,
 	$gCashSymbol => undef,
 	$gAllowedTickers => [
-	    'VBTSX',
-	    'VWENX',
-	    'VIPSX',
-	    'VMISX',
-	    'VSISX',
-	    'PAAIX',
+	    'VBTSX',  # Total bond market
+	    'VWENX',  # Wellington
+	    'VIPSX',  # Inflation protected
+	    'VMISX',  # Mid-cap signal
+	    'VSISX',  # Small-cap signal
+	    'PAAIX',  # PAAIX
 	    ],
     },
     'schwab-emil', => {
@@ -122,7 +122,15 @@ our $gAccountInfo = {
     'van-goog-401k', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
-	$gCashSymbol => undef,
+	$gCashSymbol => 'VMMXX',
+	$gAllowedTickers => [  # Also support brokerage buys
+	    'VBMPX',  # Vanguard Total Bond Mkt Ix Ist Pls
+	    'VEMPX',  # Vanguard Ext Mkt Index Inst Plus
+	    'VIIIX',  # Vanguard Inst Index Fund Inst Plus
+	    'VTPSX',  # Vanguard Tot Intl Stock Ix Inst Pl
+	    'VWIAX',  # Vanguard Wellesley Income Fund Adm
+	    'VTHRX',  # Target Retirement 2030 Trust I
+	    ],
     },
     'van-mut-funds', => {
 	$gTaxAdvantaged => 0,
@@ -456,7 +464,8 @@ sub applyRebalanceTransaction {
 	$self->{_unallocated} += $transaction->amount();
     } elsif ($action eq 'Buy') {
 	$self->{_unallocated} -= $transaction->amount();
-	if ( $self->{_unallocated} < 0 ) {
+	if ( $self->{_unallocated} < -0.01 ) {
+	    $transaction->print();
 	    die "Spent more money that we have.";
 	}
     } else {
@@ -464,9 +473,14 @@ sub applyRebalanceTransaction {
     }
 	
     my $symbol = $transaction->symbol();
-    if (defined($self->holding($symbol))) {
-	$self->holding($symbol)->applyTransaction($transaction);
+
+    if (!defined($self->holding($symbol))) {
+	# New holding in this account.
+	$self->holdings()->{$symbol} = Holding->new(
+	    $transaction->ticker(),
+	    $self);
     }
+    $self->holding($symbol)->applyTransaction($transaction);
 }
 
 sub value

@@ -39,7 +39,7 @@ sub test_from_qif : Test(14) {
     $a->printToStringArray($raStrings,
 			   '',  # Prefix
 			   1);  # Print Transactions
-    is(@$raStrings, 161, 'Returned expected number of strings');
+    is(@$raStrings, 179, 'Returned expected number of strings');
     is($raStrings->[0], 'Account: "etrade"', 'Printed');
     print join("\n", @$raStrings);
     my $raCsv = [];

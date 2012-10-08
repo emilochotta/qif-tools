@@ -412,6 +412,8 @@ sub computeAllFromTransactions
 	$$shares += $self->{_shares};
 	$$cost_basis += $self->{_amount};
 	$$cash_in += $self->{_amount};
+	$gDebug && printf("      Buy: %f Shares, total cost(\$%f) => %f Shares\n",
+	       $self->{_shares}, $self->{_amount}, $$shares, );
     } elsif ($action eq 'Cash') {
 	# TODO: Figure out what to do with cash transactions.
     } elsif ($action eq 'CGLong' || $action eq 'CGLongX' ||
@@ -447,6 +449,8 @@ sub computeAllFromTransactions
 	$$cost_basis -= ($avg_cost * $self->{_shares});
 	$$cash_in -= $self->{_amount};
 	$$shares -= $self->{_shares};
+	$gDebug && printf("      Sell: %f Shares, total value(\$%f) => %f Shares\n",
+	       $self->{_shares}, $self->{_amount}, $$shares, );
     } elsif ($action eq 'ShrsIn'
 	     || $action eq 'XIn') {
 	$$shares += $self->{_shares};
