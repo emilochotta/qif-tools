@@ -10,15 +10,15 @@ use strict;
 use warnings;
 
 sub test_ByName : Test(9) {
-    my $t = Ticker::getByName('Vanguard Inflation-Protected Securities Fund Investor Shares');
+    my $t = Ticker::getByName('DODGE & COX STOCK FUND');
     ok(defined($t), 'Ticker object was created');
     ok($t->isa('Ticker'), 'Ticker object isa ticker');
-    is($t->name(), 'Vanguard Inflation-Protected Securities Fund Investor Shares', 'Ticker name');
-    is($t->symbol(), 'VIPSX', 'Ticker symbol');
+    is($t->name(), 'DODGE & COX STOCK FUND', 'Ticker name');
+    is($t->symbol(), 'DODGX', 'Ticker symbol');
     is($t->skip(), 1, 'Ticker skip');
-    is($t->attribute('Yield'), 2.45, 'Ticker name');
+    is($t->attribute('Yield'), 1.68, 'Ticker name');
 
-    my $t2 = Ticker::getBySymbol('VIPSX');
+    my $t2 = Ticker::getBySymbol('DODGX');
     ok(defined($t), 'Ticker object was created');
     ok($t->isa('Ticker'), 'Ticker object isa ticker');
     is($t, $t2, 'Tickers are the same');

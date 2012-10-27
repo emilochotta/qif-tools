@@ -21,6 +21,7 @@ my $gTaxAdvantaged = 'ta';
 # Set of allowed ticker symbols.  The list need include only tickers
 # that appear in the asset allocation for this account.
 my $gAllowedTickers = 'at';
+my $gDisallowedTickers = 'da';
 
 # While rebalancing can this account just grow and shrink as need be?
 # e.g. a taxable brokerage account.  Or is the size fixed?
@@ -30,51 +31,136 @@ my $gFixedSize = 'fs';
 # account can't hold cash.
 my $gCashSymbol = 'cs';
 
+# Priority of buying.  Low numbers are more likely to be bought in,
+# all other factors being equal.
+my $gPriority = 'pr';
+
 our $gAccountInfo = {
     'account1' => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 0,
     },
     'account2' => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => undef,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 10,
     },
     'etrade' => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 100,
     },
     'etrade-5557' => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 100,
     },
     'etrade-ira' => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 100,
     },
     'etrade-joint', => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 100,
     },
     'schwab-annabelle', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 0,
     },
     'schwab-bin', => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 0,
     },
     'schwab-bin-ira', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 3,
     },
     'schwab-bin-401k', => {
 	$gTaxAdvantaged => 1,
@@ -86,38 +172,92 @@ our $gAccountInfo = {
 	    'VIPSX',  # Inflation protected
 	    'VMISX',  # Mid-cap signal
 	    'VSISX',  # Small-cap signal
-	    'PAAIX',  # PAAIX
+	    'PAAIX',  # World allocation
+	    'PTTRX',  # Fixed income med term
+	    'HAINX',  # Stock International
+	    'POSKX',  # Stock US Large Cap
+	    'NVLIX',  # Stock US Large Cap
+	    'SWPPX',  # S&P 500
+	    'TAVFX',  # Stock US Large Cap
+	    'TILCX',  # Stock US Large Cap
 	    ],
+	$gPriority => 0,
     },
     'schwab-emil', => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 7,
     },
     'schwab-emil-401k', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => undef,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 100,
     },
     'schwab-emil-ira', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 100,
     },
     'schwab-roth-ira', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 100,
     },
     'schwab-shawhu', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gPriority => 0,
     },
     'van-brokerage', => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => 'VMMXX',
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 3,
     },
     'van-goog-401k', => {
 	$gTaxAdvantaged => 1,
@@ -131,11 +271,21 @@ our $gAccountInfo = {
 	    'VWIAX',  # Vanguard Wellesley Income Fund Adm
 	    'VTHRX',  # Target Retirement 2030 Trust I
 	    ],
+	$gPriority => 1,
     },
     'van-mut-funds', => {
 	$gTaxAdvantaged => 0,
 	$gFixedSize => 0,
 	$gCashSymbol => undef,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 6,
     },
     'van-rollover-ira', => {
 	$gTaxAdvantaged => 1,
@@ -158,21 +308,49 @@ our $gAccountInfo = {
 	    'VFWAX',
 	    'VFSVX',
 	    ],
+	$gPriority => 2,
     },
     'van-roth-brokerage', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => undef,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 4,
     },
     'van-roth-mfs', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 4,
     },
     'van-trad-ira-brok', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
 	$gCashSymbol => $Ticker::kCash,
+	$gDisallowedTickers => [
+	    'PAAIX',  # Institutional
+	    'PTTRX',  # Institutional
+	    'VEMPX',  # Institutional
+	    'VIIIX',  # Institutional
+	    'VMISX',  # Institutional
+	    'VSISX',  # Institutional
+	    ],
+	$gPriority => 5,
     },
 };
 
@@ -198,6 +376,8 @@ sub new
 	_fixed_size => shift,
 	_cash_symbol => shift,
 	_allowed_tickers => shift,
+	_disallowed_tickers => shift,
+	_priority => shift,
 	_unallocated => shift,   # Cash amount temporarily unallocated
 	                         # during rebalancing.
     };
@@ -219,6 +399,14 @@ sub new
     if (!defined($self->{_allowed_tickers})) {
 	$self->{_allowed_tickers} = 
 	    $gAccountInfo->{$self->{_name}}->{$gAllowedTickers};
+    }
+    if (!defined($self->{_disallowed_tickers})) {
+	$self->{_disallowed_tickers} = 
+	    $gAccountInfo->{$self->{_name}}->{$gDisallowedTickers};
+    }
+    if (!defined($self->{_priority})) {
+	$self->{_priority} = 
+	    $gAccountInfo->{$self->{_name}}->{$gPriority};
     }
     if (!defined($self->{_unallocated})) {
 	$self->{_unallocated} = 0;
@@ -244,6 +432,8 @@ sub newDeepCopy
 	$self->fixed_size(),       # This is const data
 	$self->cash_symbol(),      # This is const data
 	$self->allowed_tickers(),  # This is const data
+	$self->disallowed_tickers(),  # This is const data
+	$self->priority(),         # This is const data
 	$self->unallocated(),
     );
     return $copy;
@@ -258,6 +448,8 @@ sub tax_advantaged { $_[0]->{_tax_advantaged}; }
 sub fixed_size { $_[0]->{_fixed_size}; }
 sub cash_symbol { $_[0]->{_cash_symbol}; }
 sub allowed_tickers { $_[0]->{_allowed_tickers}; }
+sub disallowed_tickers { $_[0]->{_disallowed_tickers}; }
+sub priority { $_[0]->{_priority}; }
 sub unallocated { $_[0]->{_unallocated}; }
 
 sub newAccountsFromQifDir {
@@ -352,15 +544,52 @@ sub handleTransferInKind
 	    my $holding = $acct->holding($symbol);
 	    if (! $holding->ticker()->skip()) {
 		foreach my $transfer ( @{$holding->findTransfersIn()} ) {
-# 		    my @strings;
-# 		    $transfer->printToCsvString(\@strings);
-# 		    print STDERR "Found Transfer In: ", join('',@strings);
+ 		    my @strings;
+ 		    $transfer->printToCsvString(\@strings);
+ 		    print "Found Transfer In: ", join('',@strings);
 
 		    push @transfers, $acct->handleTransferIn($holding, $transfer);
 		}
 	    }
 	}
     }
+    
+    #
+    # Handle the case where a holding moves into an account and then
+    # out again. For example, A1 -> A2 -> A3.  Look for these cases
+    # and adjust the transfer to skip A2.  Loop until there are no
+    # more such moves.
+    #
+    # TODO: does this work for A1->A2->A3->A4 ?
+    my $num_multi_moves = 1;
+    while ($num_multi_moves > 0) {
+	$num_multi_moves = 0;
+	foreach my $transfer1 (@transfers) {
+	    foreach my $transfer2 (@transfers) {
+		next if ($transfer1 == $transfer2);
+		next unless (defined($transfer1));
+		next unless (defined($transfer2));
+		# Look for cases of A2 (see comment above).
+		if ( ($transfer1->{'acctIn'} == $transfer2->{'acctOut'}) &&
+		     ($transfer1->{'transferIn'}->ticker() == $transfer2->{'transferOut'}->ticker()) ) {
+
+		    # Change A1 -> A2 to be A1->A3
+		    # The holding is destination, so it needs to be changed.
+		    $transfer1->{'holding'} = $transfer2->{'holding'};
+		    $transfer1->{'acctIn'} = $transfer2->{'acctIn'};
+		    # Shouldn't need to change the transaction
+		    # $transfer1->{'transferIn'} = $transfer2->{'transferIn'};
+
+		    $num_multi_moves++;
+		    printf ("Changing move old(%s->%s) new(%s->%s) for %s\n",
+			    $transfer1->{'acctOut'}, $transfer2->{'acctOut'},
+			    $transfer1->{'acctOut'}, $transfer1->{'acctIn'},
+			    $transfer1->{'holding'}->symbol());
+		}
+	    }
+	}
+    }
+    
     # After we've found all the transfers, do the moves.  Otherwise,
     # if there are more than one transfer of a holding (like
     # transfering lots), we won't be able to find the matching
@@ -385,7 +614,7 @@ sub handleTransferIn
     foreach my $acct_name (keys %{$gAccountsByName}) {
 	my $acct = $gAccountsByName->{$acct_name};
 	next if ($self == $acct);
-	# print STDERR "Looking for Matching Transfer Out in: ", $acct->name(), "\n";
+        print "Looking for Matching Transfer Out in: ", $acct->name(), "\n";
 	if (defined($acct->holdings()->{$holding->symbol()})) {
 	    $transferOut = $acct->holding($holding->symbol())->
 		findMatchingTransferOut($transferIn);
@@ -401,6 +630,10 @@ sub handleTransferIn
 	print "No Matching Transfer Out For: ", join('',@strings);
 	return undef;
     } else {
+	my @strings;
+	$transferOut->printToCsvString(\@strings);
+	print "... Matching Transfer Out: ", join('',@strings);
+
 	return {
 	    'acctIn' => $self,
 	    'holding' => $holding,
@@ -414,23 +647,25 @@ sub moveMatchingTransactions
 {
     my ($self, $holding, $transferIn, $acctOut, $transferOut) = @_;
 
+    print "moveMatchingTransactions\n";
+    
     # Should be able to move the entire holding.
     # Sanity Check:
     if (!defined($acctOut->holdings()->{$holding->symbol()})) {
-# 	printf("WARNING: matching holding is gone. Must be more than one transfer for %s in %s\n",
-# 	       $holding->symbol(), $self->name());
-# 	my @strings;
-# 	$transferOut->printToCsvString(\@strings);
-# 	print "Transfer Out: ", join('',@strings);
-# 	my @strings2;
-# 	$transferIn->printToCsvString(\@strings2);
-# 	print "Transfer In: ", join('',@strings2);
+ 	printf ("WARNING: matching holding is gone. Must be more than one transfer for %s in %s\n",
+ 	       $holding->symbol(), $self->name());
+ 	my @strings;
+ 	$transferOut->printToCsvString(\@strings);
+ 	print "Transfer Out: ", join('',@strings);
+ 	my @strings2;
+ 	$transferIn->printToCsvString(\@strings2);
+ 	print "Transfer In: ", join('',@strings2);
 	return;
     }
     
     # Sanity Check:
     if ($acctOut->holding($holding->symbol())->shares() > 2.0) {
-	printf("ERROR: There are still %f shares of %s in %s\n",
+	printf ("ERROR: There are still %f shares of %s in %s\n",
 	       $holding->shares(), $holding->symbol(), $self->name());
 	my @strings;
 	$transferOut->printToCsvString(\@strings);
@@ -442,6 +677,12 @@ sub moveMatchingTransactions
     }
 
     # Move the transactions.
+    {
+	my $transactions_to_move = $acctOut->holding($holding->symbol())->transactions();
+	my @strings;
+	$transactions_to_move->printToCsvString(\@strings);
+	print "Transactions to move: ", join("...",@strings);
+    }
     $holding->prependHoldingTransactions($acctOut->holding($holding->symbol()));
 
     # Delete the holding from the account they moved from.
@@ -456,20 +697,29 @@ sub moveMatchingTransactions
 
 # During rebalancing.  If this account has a fixed size (e.g. it is a
 # 401K where the money can't easily be moved in/out), then the money
-# has to be to/from our unallocated slush fund.
+# has to be to/from our unallocated slush fund.  Return the amount of
+# money that can be moved to the portfolio slush fund.
 sub applyRebalanceTransaction {
     my($self, $transaction) = @_;
     my $action = $transaction->action();
+    my $amount;
     if ($action eq 'Sell') {
-	$self->{_unallocated} += $transaction->amount();
+	$amount = $transaction->amount();
     } elsif ($action eq 'Buy') {
-	$self->{_unallocated} -= $transaction->amount();
-	if ( $self->{_unallocated} < -0.01 ) {
-	    $transaction->print();
-	    die "Spent more money that we have.";
-	}
+	$amount = 0.0 - ($transaction->amount());
     } else {
 	die "Can't handle transaction action $action";
+    }
+    my $amount_returned_to_portfolio = 0.0;
+    if ($self->fixed_size()) {
+	$self->{_unallocated} += $amount;
+	if ( $self->{_unallocated} < -0.01 ) {
+	    $transaction->print();
+	    printf("Spent more money (%.2f) than we have in acct %s\n.",
+		$amount, $self->name());
+	}
+    } else {
+	$amount_returned_to_portfolio = $amount;
     }
 	
     my $symbol = $transaction->symbol();
@@ -481,6 +731,7 @@ sub applyRebalanceTransaction {
 	    $self);
     }
     $self->holding($symbol)->applyTransaction($transaction);
+    return $amount_returned_to_portfolio;
 }
 
 sub value

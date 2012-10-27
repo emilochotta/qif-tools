@@ -188,13 +188,13 @@ my %Skip = (
     'Vanguard Mid-Cap Index Fund Investor Shares' => 'VIMAX', # converted to adm
     'Vanguard SP 500 index' => 'VFINX',  # This was transfered to VFIAX
     'VANGUARD LONG-TERM CORPORATE BOND' => 'VWESX',
-    'Vanguard Inflation-Protected Securities Fund Investor Shares' => 'VIPSX',
+    # 'Vanguard Inflation-Protected Securities Fund Investor Shares' => 'VIPSX',
     'VANGUARD INTERNATIONAL VALUE' => 'VTRIX',
     'Vanguard Pacific Stock Index Fund Investor Shares' => 'VPACX',
     'VANGUARD SHORT-TERM FEDERAL' => 'VSGBX',
     'Vanguard Small-Cap Growth Index Fund' => 'VISGX',
     'Vanguard Small-Cap Value Index Fund' => 'VISVX',
-    'Vanguard Tax-Exempt Money Market Fund' => '',
+#    'Vanguard Tax-Exempt Money Market Fund' => '',
     'VIRTUS INSIGHT SMALL CAP VALUE A' => 'HSVZX',
     'VODAFONE AIRTOUCH PLC SP ADR' => '1',
     'Wal-Mart Stores Inc' => '1',
@@ -439,7 +439,7 @@ sub InitializeFromCsv {
 	}
     
 	while (my $row = $csv->getline($io)) {
-#	    print "\"", join(", ", @{ $row }), "\"\n";
+	    # print "\"", join(", ", @{ $row }), "\"\n";
 	    my $symbol = $row->[0];
 	    my $name = $row->[1];
 
@@ -453,6 +453,8 @@ sub InitializeFromCsv {
 		$ticker->{$header->[$i]} = $row->[$i];
 	    }
 	}
+    } else {
+	die "Can't open $fname";
     }
 }
 

@@ -117,10 +117,20 @@ sub findMatchingTransferOut
     return undef;
 }
 
+sub cashFlow
+{
+    my($self, $rh_cashflow) = @_;
+
+    foreach my $transaction (@{ $self }) {
+	$transaction->cashFlow($rh_cashflow);
+    }
+}
+
 sub computeAllFromTransactions
 {
     my($self,$shares,$price,$estimated,$cost_basis,$gain,
-       $value,$cash_in,$returned_capital,$my_return,$has_new_trans) = @_;
+       $value,$cash_in,$returned_capital,$my_return,$has_new_trans,
+	$rh_cashflow) = @_;
 
     $$shares = 0;
     $$price = 0 unless defined $$price;
@@ -140,6 +150,7 @@ sub computeAllFromTransactions
 	    $cash_in,
 	    $returned_capital,
 	    $my_return,
+	    $rh_cashflow,
 	    );
     }
 #    printf(STDERR "Total Returned Capital: %f\n", $$returned_capital);

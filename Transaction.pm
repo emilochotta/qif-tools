@@ -398,11 +398,43 @@ sub isMatchingTransferOut
     return 1;
 }
 
+sub cashFlow
+{
+    my($self,
+       $rh_cashflow) = @_;
+    return if ($self->ticker()->skip());
+    my $action = $self->{_action};
+    
+    if ($action eq 'Buy' || $action eq 'BuyX'
+	|| $action eq 'CvrShrt' || $action eq 'CvrShrtX') {
+	my $date = &ReformatDateForIRR($self->date());
+	my $irr_amount = $self->{_amount};
+	if (defined $rh_cashflow->{$date}) {
+	    $rh_cashflow->{$date} += $irr_amount;
+	} else {
+	    $rh_cashflow->{$date} = $irr_amount;
+	}
+    } elsif ($action eq 'Sell'
+	     || $action eq 'SellX'
+	     || $action eq 'ShtSell'
+	     || $action eq 'ShtSellX'
+	) {
+	my $date = &ReformatDateForIRR($self->date());
+	my $irr_amount = -1 * $self->{_amount};
+	if (defined $rh_cashflow->{$date}) {
+	    $rh_cashflow->{$date} += $irr_amount;
+	} else {
+	    $rh_cashflow->{$date} = $irr_amount;
+	}
+    }
+}
+
 sub computeAllFromTransactions
 {
     # Compute shares, cost_basis, cash_in, returned_capital
     my($self,$shares,$price,$estimated,$cost_basis,$gain,
-       $value,$cash_in,$returned_capital,$my_return) = @_;
+       $value,$cash_in,$returned_capital,$my_return,
+	$rh_cashflow) = @_;
 
     return if ($self->ticker()->skip());
     my $action = $self->{_action};
@@ -414,7 +446,11 @@ sub computeAllFromTransactions
 	$$cash_in += $self->{_amount};
 	$gDebug && printf("      Buy: %f Shares, total cost(\$%f) => %f Shares\n",
 	       $self->{_shares}, $self->{_amount}, $$shares, );
-    } elsif ($action eq 'Cash') {
+ 	($self->symbol() eq 'LSGLX') && printf("      Buy: %f Shares, total cost(\$%f) => %f Shares\n",
+ 	       $self->{_shares}, $self->{_amount}, $$shares, );
+    } elsif ($action eq 'Cash'
+	     || $action eq 'ContribX'
+	     ) {
 	# TODO: Figure out what to do with cash transactions.
     } elsif ($action eq 'CGLong' || $action eq 'CGLongX' ||
 	     $action eq 'CGShort' || $action eq 'CGShortX' ||
@@ -451,6 +487,8 @@ sub computeAllFromTransactions
 	$$shares -= $self->{_shares};
 	$gDebug && printf("      Sell: %f Shares, total value(\$%f) => %f Shares\n",
 	       $self->{_shares}, $self->{_amount}, $$shares, );
+ 	($self->symbol() eq 'LSGLX') && printf("      Sell: %f Shares, total cost(\$%f) => %f Shares\n",
+ 	       $self->{_shares}, $self->{_amount}, $$shares, );
     } elsif ($action eq 'ShrsIn'
 	     || $action eq 'XIn') {
 	$$shares += $self->{_shares};
@@ -468,12 +506,13 @@ sub computeAllFromTransactions
 	# Noop
 #    } elsif ($action eq 'StkSplit'
 # 	|| $action eq 'WithdrwX'
-# 	|| $action eq 'ContribX'
 # 	|| $action eq 'MargInt'
     } else {
 	die "Action \"$action\" NOT SUPPORTED in ComputeAllFromTransactions\n";
     }
 #    $gDebug && print("Action \"$action\", Shares \"$$shares\".\n");
+
+    $self->cashFlow($rh_cashflow);
 }
 
 sub DateToDaysSince2000 {
@@ -516,5 +555,10 @@ sub IsLeap {
     return 1;
 }
 
+sub ReformatDateForIRR {
+    my $date = shift;
+    my ($mm,$dd,$yyyy) = ($date =~ /(\d+)-(\d+)-(\d+)/);
+    return sprintf("%04d-%02d-%02d", $yyyy, $mm, $dd);
+}
 1;
 

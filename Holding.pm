@@ -5,6 +5,7 @@
 package Holding;
 use Account;
 use AssetCategory;
+use Finance::Math::IRR;
 use Ticker;
 use Transactions;
 use Transaction;
@@ -17,6 +18,9 @@ use warnings;
 
 my $gDebug = 1;
 
+# Less than this number of shares is considered a zero balance
+my $gZero = 2.0;
+
 #-----------------------------------------------------------------
 # Methods
 #-----------------------------------------------------------------
@@ -27,7 +31,7 @@ sub new
     my $self = {
 	_ticker => shift,        # Ref to Ticker object.
 
-	# Ref to Account object.  May be undef.
+	# Ref to Account.  May be undef.
 	_inAccount => shift,     
 
 	# Ref to AssetCategory object.  May be undef.
@@ -49,8 +53,12 @@ sub new
 	_cashIn => shift,        # Purchases - Sales
 	_returnedCapital => shift,  # Capital returned (e.g. cash dividend)
 	_myReturn => shift,      # Return = value + _returnedCap - _cashIn
+	_IRR => shift,           # Internal Rate of Return
 	_hasNewTrans => shift,   # There are unprocessed transactions
     };
+    if ( defined($self->{_inAccount}) and (ref($self->{_inAccount}) ne 'Account')) {
+	die "new Holding, account ref isn't an Account.\n";
+    }
     if ( !defined( $self->{_transactions} )) {
 	$self->{_transactions} = Transactions->new();
     } elsif ( ! $self->{_transactions}->isa('Transactions') ) {
@@ -78,6 +86,7 @@ sub newDeepCopy
 	$self->cashIn(),
 	$self->returnedCapital(),
 	$self->myReturn(),
+	$self->IRR(),
 	$self->hasNewTrans(),
     );
 }
@@ -97,6 +106,7 @@ sub value { $_[0]->{_value}; }
 sub cashIn { $_[0]->{_cashIn}; }
 sub returnedCapital { $_[0]->{_returnedCapital}; }
 sub myReturn { $_[0]->{_myReturn}; }
+sub IRR { $_[0]->{_IRR}; }
 sub hasNewTrans { $_[0]->{_hasNewTrans}; }
 
 sub setInAccount { $_[0]->{_inAccount} = $_[1]; }
@@ -258,9 +268,20 @@ sub deleteTransaction
     return $self->{_transactions}->deleteTransaction($transaction);
 }
 
+sub cashFlow
+{
+    my($self, $rh_cashflow) = @_;
+    return $self->{_transactions}->cashFlow($rh_cashflow);
+}
+
 sub computeAllFromTransactions
 {
     my($self) = @_;
+
+    # Hash with date => transaction-value pairs for the IRR function.
+    # A buy is positive and a sell is negative.
+    my $rh_cashflow = {};
+    
     $self->{_transactions}->computeAllFromTransactions(
 	\$self->{_shares},
 	\$self->{_price},
@@ -271,7 +292,8 @@ sub computeAllFromTransactions
 	\$self->{_cashIn},
 	\$self->{_returnedCapital},
 	\$self->{_myReturn},
-	\$self->{_hasNewTrans}
+	\$self->{_hasNewTrans},
+	$rh_cashflow,
     );
     my $ticker = $self->ticker();
     if (defined($ticker->attribute('Price'))
@@ -279,10 +301,33 @@ sub computeAllFromTransactions
 	$self->{_price} = $ticker->attribute('Price');
     }
     $self->{_value} = $self->{_shares} * $self->{_price};
-#    printf("Value of %s is %f * %f = %f\n", $self->symbol(),
-# 	   $self->price(), $self->shares(), $self->value());
+    my $acct_name = defined($self->inAccount()) ? $self->inAccount()->name() : '';
+    ($self->symbol() eq 'LSGLX') && printf("Value of %s in %s is %f * %f = %f\n", $self->symbol(),
+					   $acct_name, $self->price(), $self->shares(), $self->value());
     $self->{_gain} = $self->{_value} - $self->{_cost_basis};
     $self->{_myReturn} =
 	$self->{_value} + $self->{_returnedCapital} - $self->{_cashIn};
+
+    if ($self->{_value} > $gZero && scalar($self->transactions()) > 0) {
+	# Compute IRR.  We need to add a last transaction that represents
+	# selling the holding and recouping the value plus any additional
+	# money we've made from it.
+	my ($yyyy,$mm,$dd) = (localtime)[5,4,3];
+	$yyyy += 1900;
+	$mm++;
+	my $date_string = sprintf("%04d-%02d-%02d", $yyyy, $mm, $dd);
+	$rh_cashflow->{$date_string} = -1 * ($self->{_value} + $self->{_returnedCapital});
+	printf("Cashflow for %s in %s:\n", $self->symbol(), $acct_name);
+	foreach my $date (sort keys %{$rh_cashflow}) {
+	    printf("  %s => \$%.2f,\n", $date, $rh_cashflow->{$date});
+	}
+	$self->{_IRR} = xirr(%{$rh_cashflow}, precision => 0.001);
+	if ( defined $self->{_IRR} ) {
+	    printf("  xirr for %s in %s is %.2f%%\n", $self->symbol(), $acct_name, 100.0 * $self->{_IRR});
+	} else {
+	    printf("ERROR: xirr is undefined for %s\n", $self->symbol());
+	}
+    }
 }
+
 1;

@@ -7,6 +7,7 @@ package Portfolio;
 use Account;
 use AssetAllocation;
 use AssetCategory;
+use Finance::Math::IRR;
 use Holding;
 use RebalTran;
 use Ticker qw($kCash);
@@ -30,7 +31,7 @@ my $gZero = 2.0;
 my $gFedTaxRate = 0.35;
 my $gStateTaxRate = 0.094;
 
-# Map from portfolio name to list of account names. 
+# Map from portfolio name to list of account names.
 our %PortfolioDefs = (
     'all' => [
 	'etrade',
@@ -102,6 +103,8 @@ my $kCategory = 'Category';
 my $kCatAllocTickers = 'Alloc Tickers';
 my $kCatOwnedTickers = 'Owned Tickers';
 my $kCatValue = 'Value';
+my $kCatROI = 'ROI';  # Return
+my $kCatIRR = 'IRR';  # Internal Rate of Return
 my $kCatAllocation = 'Allocation';
 my $kCatCurrentWeight = 'Current Weight';
 my $kCatDifference = 'Difference';
@@ -111,7 +114,7 @@ my $kCatHighDivTargetValue = 'High Div Target Value';  # Subtract holdings that 
 # Sum of holdings in tax advantaged accounts in which at least one of the holdings in
 # this category can be purchased.
 my $kCatTaxAdvAcctSpace = 'Tax Advantaged Accts Space';
-my $kCatMaxYield = 'Max Taxable Yield';
+my $kCatYield = 'Yield';
 my $kCatTargetValueDiff = 'Target Value Diff';
 my $kCatRebalance = 'Rebalance';
 my $kCatTargetBuy = 'Target Buy';
@@ -132,7 +135,8 @@ my $kHoldGain = 'Gain';
 my $kHoldCashIn = 'CashIn';
 my $kHoldReturnedCapital = 'Returned Capital';
 my $kHoldReturn = 'Return';
-my $kHoldROIC = 'ROIC';  # Return on Invested Capital
+my $kHoldROI = 'ROI';  # Return on Investment
+my $kHoldIRR = 'IRR';  # Internal Rate of Return
 my $kHoldTaxAdvantaged = 'Tax Advantaged';
 my $kHoldYield = 'Yield';
 my $kHoldTaxYield = 'Taxable Yield';
@@ -152,6 +156,9 @@ my $kHoldConsolidate = 'Multiple Accounts';
 # only the first few columns.  The remainder of the columns names are
 # holding keys (i.e. $kHoldKey).
 my $kRebalKey = 'Key';
+my $kRebalSymbol = 'Ticker';
+my $kRebalAccount = 'Account';
+my $kRebalCategory = 'Category';
 my $kRebalAction = 'Action';
 my $kRebalReason = 'Reason';
 my $kRebalShares = 'Shares';
@@ -205,6 +212,13 @@ sub new
 	# les.  Calculated from holdings (not
 	# accounts.)
 	_unallocated => shift,
+
+	# Total return (percent).
+	_roi => shift,
+
+	# Internal Rate of Return -- Annualized personal rate of return.
+	_irr => shift,
+
     };
     if (defined($self->{_name}) &&
 	defined($PortfoliosByName->{$self->{_name}})) {
@@ -264,6 +278,8 @@ sub perHoldingData { $_[0]->{_perHoldingData}; }
 sub rebalTrans { $_[0]->{_rebalTrans}; }
 sub value { $_[0]->{_value}; }
 sub unallocated { $_[0]->{_unallocated}; }
+sub roi { $_[0]->{_roi}; }
+sub irr { $_[0]->{_irr}; }
 
 sub SetAssetAllocation { $_[0]->{_assetAllocation} = $_[1]; }
 
@@ -391,7 +407,7 @@ sub newPortfoliosFromAccounts {
 	    # this portfolio.
 	    foreach my $symbol (keys %{ $account->holdings() }) {
 		my $deb = 0;
-#		$deb = 1 if ($symbol eq 'DJP');
+		# $deb = 1 if ($symbol eq 'LSGLX');
 		next if ($account->holding($symbol)->ticker()->skip());
 		if ($deb) {
 		    printf("Add Account %s Holding of %s to Portfolio %s\n",
@@ -628,30 +644,31 @@ sub printRebalanceCsvString
     # 6) Use a simple greedy algorithm to buy the assets back into
     #    accounts.
     #
-    # Stuff we need:
-    #  - target portfolio.  Calculated from asset allocation.
-    #  - rebalancing transactions.
-    #  - How to print out the transactions?
-    #  - Cash management.
-    #  - Account info: tax advantaged, allowable tickers in account.
-    #  - Ticker info: yield.
-
-    #
-    # Create hash per rebalance move:
-    #  - Transaction
-    #  - Unallocated cash
-    #  - Resulting portfolio
-
-    # Need to handle tickers that are high yield but not taxable,
-    # i.e. muni funds.  Are gov bonds taxable?  Need to check my actual taxes.
     
-    $self->sellHighYieldInTaxableAccount();
-
-    # my $new_portfolio = $self->generateBestPortfolio();
+    my $rh_symbols_done = $self->sellHighYieldInTaxableAccount();
+    $self->rebalance($rh_symbols_done);
 
     $self->printRebalanceLinesString(
 	$raS,
  	$csv);
+
+    my $current_portfolio = $self;
+    my $num_rebalance_steps = scalar(@{$self->{_rebalTrans}});
+    if ($num_rebalance_steps > 0) {
+	$current_portfolio =
+	    $self->{_rebalTrans}->[$num_rebalance_steps-1]->portfolio();
+    }
+
+    $current_portfolio->{_perCatData} = {};
+    $current_portfolio->{_perHoldingData} = {};
+    $current_portfolio->analyzeHoldingsAgainstAllocations();
+    push @{$raS}, "\n";
+    $current_portfolio->printCategoryLinesString(
+	$raS,
+	$csv);
+    $current_portfolio->printTickerLinesString(
+	$raS,
+	$csv);
 }
     
 sub calculateValue {
@@ -695,29 +712,19 @@ sub taxAdjustedYield {
 sub applyTransaction {
     my($self, $transaction) = @_;
     my $action = $transaction->action();
-    if ($action eq 'Sell') {
-	$self->{_unallocated} += $transaction->amount();
-    } elsif ($action eq 'Buy') {
-	$self->{_unallocated} -= $transaction->amount();
-	if ( $self->{_unallocated} < 0 ) {
-	    die "Spent more money that we have.";
-	}
-    } else {
-	die "Can't handle transaction action $action";
-    }
-	
     my $symbol = $transaction->symbol();
     my $acct_name = $transaction->account();
     if (!defined($self->holding($symbol))) {
 	my $holding = Holding->new(
 	    $transaction->ticker(),
-	    $transaction->account(),
+	    $self->account($transaction->account()),
 	    );
 	$self->{_holdings}->{$symbol} = $holding;
     }
     $self->holding($symbol)->applyTransaction($transaction);
     my $acct = $self->account($acct_name);
-    $acct->applyRebalanceTransaction($transaction);
+    my $amount_returned_to_portfolio = $acct->applyRebalanceTransaction($transaction);
+    $self->{_unallocated} += $amount_returned_to_portfolio;
     $self->calculateValue();
 }
 
@@ -740,6 +747,10 @@ sub analyzeHoldingsAgainstAllocations {
     my $total_alloc = 0;  # Just a sanity check
     my $excess_buy = 0;  # This is the sum of all the buys & sells proposed for rebalancing
     my $alloc = $self->{_assetAllocation};
+    my $total_cash_in = 0.0;
+    my $total_my_return = 0.0;
+    my $total_returned_capital = 0.0;
+    my $rh_total_cashflow = {};
     foreach my $cat_name (sort keys %{ $alloc->categories() }) {
 	my $category_value = 0;
 	my $category = $alloc->category($cat_name);
@@ -750,16 +761,32 @@ sub analyzeHoldingsAgainstAllocations {
 	# Alloc symbols will be in order or desirability.
 	my @owned_symbols;
 	my @alloc_symbols;
-	my $max_taxable_yield = 0.0;
+	my $cat_yield = -1.0;
+	my $cash_in = 0.0;
+	my $my_return = 0.0;
+	my $returned_capital = 0.0;
+	my $rh_cashflow = {};
 	foreach my $symbol (@{ $raTickerSymbols }) {
 	    push @alloc_symbols, $symbol;
-	    if (defined($self->holding($symbol))) {
+	    if (defined($self->holding($symbol))
+		&& ($self->holding($symbol)->shares() > $gZero)) {
 		$category_value += $self->holding($symbol)->value();
+		$cash_in += $self->holding($symbol)->cashIn();
+		$my_return += $self->holding($symbol)->myReturn();
+		$returned_capital += $self->holding($symbol)->returnedCapital();
+		$self->holding($symbol)->cashFlow($rh_cashflow);
+		$total_cash_in += $self->holding($symbol)->cashIn();
+		$total_my_return += $self->holding($symbol)->myReturn();
+		$total_returned_capital += $self->holding($symbol)->returnedCapital();
+		$self->holding($symbol)->cashFlow($rh_total_cashflow);
 		push @owned_symbols, $symbol;
 	    }
 	    my $taxable_yield = &taxAdjustedYield(Ticker::getBySymbol($symbol));
-	    $max_taxable_yield = $taxable_yield
-		if ($taxable_yield > $max_taxable_yield);
+
+	    # Change the definition of cat yield to be the optimal holding yield.
+# 	    $cat_yield = $taxable_yield
+# 		if ($taxable_yield > $cat_yield);
+ 	    $cat_yield = $taxable_yield if ($cat_yield < 0.0);
 	}
 	$total_portfolio_value += $category_value;
 # 	$gDebug && printf("Category %s = %f, total %f\n",
@@ -777,6 +804,22 @@ sub analyzeHoldingsAgainstAllocations {
 	$cat_data->{$kCatOwnedTickers} = $owned_symbols;
 	$cat_data->{$kCatConsolidate} = (scalar(@owned_symbols)>1);
 	$cat_data->{$kCatValue} = $category_value;
+
+	# Note: After a lot of debugging, I found that the category
+	# IRR can differ from the individual holding IRR even if there
+	# is only one holding.  Specifically, for LSGLX, there was
+	# only a single holding with IRR of 6%, while the category IRR
+	# was 5%.  The difference arose because the category contains
+	# transactions for an old holding that was completely sold.
+	# These were considered in the category IRR.  I can't decide
+	# if that's the correct information.  I guess it gives a
+	# better historical view of the category, so I will leave it.
+	&computePersonalReturn(
+	    $cash_in, \$cat_data->{$kCatROI}, $my_return,
+	    &computeIRR($rh_cashflow, $category_value,
+			$returned_capital, "Category $cat_name"),
+	    \$cat_data->{$kCatIRR});
+
 	$cat_data->{$kCatAllocation} = $alloc_value;
 
 	my $current_weight = $category_value / $self->value();
@@ -796,7 +839,7 @@ sub analyzeHoldingsAgainstAllocations {
 	my $target_value = $self->value() * $cat_data->{$kCatAllocation};
 	$cat_data->{$kCatTargetValue} = $target_value;
 	$cat_data->{$kCatHighDivTargetValue} = $target_value;
-	$cat_data->{$kCatMaxYield} = $max_taxable_yield;
+	$cat_data->{$kCatYield} = $cat_yield;
 	$cat_data->{$kCatTaxAdvAcctSpace} = 0.0;
 
 	# See the definition of kCatTaxAdvAcctSpace for more comments.
@@ -843,6 +886,14 @@ sub analyzeHoldingsAgainstAllocations {
 	    $total_portfolio_value, $self->value());
     }
 
+    # Compute ROI and IRR for the portfolio.
+    &computePersonalReturn(
+	$total_cash_in, \$self->{_roi}, $total_my_return,
+	&computeIRR($rh_total_cashflow, $total_portfolio_value,
+		    $total_returned_capital,
+		    sprintf("Portfolio %s", $self->name())),
+	\$self->{_irr});
+
     # Now go through by holding/account.
     my $totalTaxAdvantagedValue = 0;
     foreach my $acct_name (keys %{ $self->accounts() }) {
@@ -871,12 +922,9 @@ sub analyzeHoldingsAgainstAllocations {
 	    $hold_data->{$kHoldCashIn} = $holding->cashIn();
 	    $hold_data->{$kHoldReturnedCapital} = $holding->returnedCapital();
 	    $hold_data->{$kHoldReturn} = $holding->myReturn();
-	    if ($holding->cashIn() > 0) {
-		$hold_data->{$kHoldROIC} =
-		    100.0 * $holding->myReturn() / $holding->cashIn();
-	    } else {
-		$hold_data->{$kHoldROIC} = 0;
-	    }
+	    &computePersonalReturn(
+		$holding->cashIn(), \$hold_data->{$kHoldROI}, $holding->myReturn(),
+		$holding->IRR(), \$hold_data->{$kHoldIRR});
 	    $hold_data->{$kHoldTaxAdvantaged} =
 		($acct->tax_advantaged()) ? $value : 0;
 	    $totalTaxAdvantagedValue += $hold_data->{$kHoldTaxAdvantaged};
@@ -1014,6 +1062,63 @@ sub analyzeHoldingsAgainstAllocations {
     }
 }
 
+# Capture this logic in one place.
+sub computePersonalReturn {
+    my(
+	$cash_in,
+	$r_roi,
+	$my_return,
+	$irr,
+	$r_irr,
+	) = @_;
+
+    if ($cash_in > 0) {
+	$$r_roi = $my_return / $cash_in;
+    } else {
+	$$r_roi = 0;
+    }
+    if ($cash_in > 0 && defined $irr) {
+	$$r_irr = $irr;
+	# if the ROI is less than IRR, then IRR is less than a year
+	# and not very useful.  So replace it.
+	if ( abs($$r_roi) < abs($$r_irr) ) {
+	    $$r_irr = $$r_roi;
+	}
+    } else {
+	$$r_irr = 0;
+    }
+}
+
+# Capture this logic in one place.
+sub computeIRR {
+    my(
+	$rh_cashflow,
+	$value,
+	$returned_capital,
+	$label,
+	) = @_;
+
+    # Compute IRR.  We need to add a last transaction that represents
+    # selling the holding and recouping the value plus any additional
+    # money we've made from it.
+    my ($yyyy,$mm,$dd) = (localtime)[5,4,3];
+    $yyyy += 1900;
+    $mm++;
+    my $date_string = sprintf("%04d-%02d-%02d", $yyyy, $mm, $dd);
+    $rh_cashflow->{$date_string} = -1 * ($value + $returned_capital);
+    printf("Cashflow for %s:\n", $label);
+    foreach my $date (sort keys %{$rh_cashflow}) {
+	printf("  %s => \$%.2f,\n", $date, $rh_cashflow->{$date});
+    }
+    my $irr = xirr(%{$rh_cashflow}, precision => 0.001);
+    if ( defined $irr ) {
+	printf("  xirr is %.2f%%\n", 100.0 * $irr);
+    } else {
+	printf("ERROR: xirr is undefined for %s\n", $label);
+    }
+    return $irr;
+}
+
 sub printCategoryLinesString {
     my($self, 
        $raS,           # Out: Output is written back to this array. 
@@ -1022,11 +1127,12 @@ sub printCategoryLinesString {
 
     my $column_headers = [$kCategory, $kCatAllocTickers,
 			  $kCatOwnedTickers, $kCatValue,
+			  $kCatROI, $kCatIRR,
 			  $kCatAllocation, $kCatCurrentWeight,
 			  $kCatDifference, $kCatDiffPercent,
 			  $kCatTargetValue, $kCatTargetValueDiff,
 			  $kCatHighDivTargetValue,
-			  $kCatTaxAdvAcctSpace, $kCatMaxYield,
+			  $kCatTaxAdvAcctSpace, $kCatYield,
 			  $kCatRebalance, $kCatTargetBuy, $kCatBuy];
 			  &Util::printCsv($column_headers, $csv,
 			  $raS);
@@ -1046,6 +1152,8 @@ sub printCategoryLinesString {
     }
     my $totals = {};
     $totals->{$kCatValue} = $self->value();
+    $totals->{$kCatROI} = $self->roi();
+    $totals->{$kCatIRR} = $self->irr();
     # $totals->{$kBuy} = $excess_buy;
     &Util::printHashToCsv($totals, $column_headers,
 			  undef, $csv, $raS);
@@ -1062,7 +1170,7 @@ sub printTickerLinesString {
 			   $kHoldShares, $kHoldValue, $kHoldCostBasis,
 			   $kHoldGain, $kHoldCashIn,
 			   $kHoldReturnedCapital, $kHoldReturn,
-			   $kHoldROIC, $kHoldTaxAdvantaged,
+			   $kHoldROI, $kHoldIRR, $kHoldTaxAdvantaged,
 			   $kHoldYield, $kHoldTaxYield,
 			   $kHoldIdealVal, $kHoldFedTax, $kHoldCaTax,
 			   $kHoldTax, $kHoldTaxAdvAcctSpace,
@@ -1090,12 +1198,15 @@ sub sellHighYieldInTaxableAccount {
 
     # Cache the tax advantaged accounts.
     my $tax_advantaged_accts = {};
+    my $taxable_accts = {};
     my $totalTaxAdvantagedValue = 0;
     foreach my $acct_name (keys %{ $self->accounts() }) {
 	my $acct = $self->accounts()->{$acct_name};
 	if ($acct->tax_advantaged()) {
 	    $tax_advantaged_accts->{$acct_name} = $acct;
 	    $totalTaxAdvantagedValue += $acct->value();
+	} else {
+	    $taxable_accts->{$acct_name} = $acct;
 	}
     }
 
@@ -1113,7 +1224,7 @@ sub sellHighYieldInTaxableAccount {
     # sell/buy, so this must point to the most recent deep copy.
     my $current_portfolio = $self;
 
-    my $stop_after = 10;
+    my $stop_after = 20;
     my $count = 0;
     
     # Go through portfolio categories from highest to lowest
@@ -1121,13 +1232,13 @@ sub sellHighYieldInTaxableAccount {
     # possible holdings in the category.  Should we just use the yield
     # of the optimal holding?  Or of holdings we actually own?
     foreach my $cat_name (sort
-		     { $self->{_perCatData}->{$b}->{$kCatMaxYield}
-		       <=> $self->{_perCatData}->{$a}->{$kCatMaxYield} }
+		     { $self->{_perCatData}->{$b}->{$kCatYield}
+		       <=> $self->{_perCatData}->{$a}->{$kCatYield} }
 		     keys %{ $self->{_perCatData} }) {
 	my $cat_data = $self->{_perCatData}->{$cat_name};
 	my $target_value = $cat_data->{$kCatTargetValue};
 	printf("High Yield Buy \$%.2f of %s (taxable yield %.2f)\n",
-	       $target_value, $cat_name, $cat_data->{$kCatMaxYield});
+	       $target_value, $cat_name, $cat_data->{$kCatYield});
     
 	# Make a list of the holdings for this category.  We may end up
 	# selling these.
@@ -1161,12 +1272,13 @@ sub sellHighYieldInTaxableAccount {
 	if ( $target_value < $amount_held ) {
 	    my $amount_to_sell = $amount_held - $target_value;
 	    printf("Sell \$%.2f to rebalance\n", $amount_to_sell);
+	    my $reason = sprintf("Sell \$%.2f from HY Category \"%s\"", $amount_to_sell, $cat_name);
 	    my $remaining_amount =
 		$self->sellHighYieldHoldings(\$current_portfolio,
 					     $amount_to_sell,
 					     $ra_symbol_sell_order,
 					     $rh_holdings_to_maybe_sell,
-					     'Rebalance HY Cat');
+					     $reason);
 	    ($remaining_amount > $gZero)
 		&& print "Error: Can't sell enough (initially).\n";
 	} else {
@@ -1178,8 +1290,6 @@ sub sellHighYieldInTaxableAccount {
 	    printf("Increase holdings by \$%.2f to rebalance\n", $extra_to_buy);
 	}
 
-	next if ($target_value < $gZero);
-	
 	# Subtract taxable holdings in this category that we'd be
 	# selling with a capital loss. The IRS doesn't allow tax
 	# benefit for this sale, so we don't want to do it.
@@ -1191,6 +1301,7 @@ sub sellHighYieldInTaxableAccount {
 	    my $holding = $acct->holding($symbol);
 	    if ($holding->gain() < 0 && !$acct->tax_advantaged()) {
 		$target_value -= $holding->value();
+		$cat_data->{$kCatBuy} += $holding->value();
 		$availableTaxAdvantagedValue -= $holding->value();
 		printf("  Reduce Buy to \$%.2f because holding %s has capital loss\n",
 		       $target_value, $key);
@@ -1207,7 +1318,8 @@ sub sellHighYieldInTaxableAccount {
 	my $raTickerSymbols = $category->symbols();
 
 	foreach my $symbol (@{ $raTickerSymbols }) {
-	    printf("  Consider buying %s\n", $symbol);
+	    printf("  Need to buy \$%.2f, consider symbol %s\n",
+		   $target_value, $symbol);
 
 	    # Subtract holdings of this symbol already owned in tax
 	    # advantaged accounts.  This relies on going through the
@@ -1221,6 +1333,7 @@ sub sellHighYieldInTaxableAccount {
 		    my $holding = $acct->holding($symbol);
 		    if ($holding->value() > $gZero) {
 			$target_value -= $holding->value();
+			$cat_data->{$kCatBuy} += $holding->value();
 			$availableTaxAdvantagedValue -= $holding->value();
 			printf("    Reduce Buy to \$%.2f -> already hold %s\n",
 			       $target_value, $key);
@@ -1237,11 +1350,14 @@ sub sellHighYieldInTaxableAccount {
 	    # They are now locked.
 	    $symbols_done->{$symbol} = 1;
 
+	    # Don't early exit from this loop because we want to add
+	    # all the symbols to symbols_done.
+	    next if ($target_value < $gZero);
+
 	    # Try to buy
 	    my $rh_buys =
-		$current_portfolio->tryToBuy($symbol, $target_value,
-					     $symbols_done,
-					     $tax_advantaged_accts);
+		$self->tryToBuy($current_portfolio, $symbol, $target_value,
+				$symbols_done, $tax_advantaged_accts);
 
 	    # Handle the buy(s).
 	    foreach my $acct_name (keys %{$rh_buys}) {
@@ -1261,12 +1377,13 @@ sub sellHighYieldInTaxableAccount {
 		    # these accounts to the account to buy in.  Use the
 		    # same order as above when we had too much in this
 		    # category.
+		    my $reason = sprintf("Move HY Cat \"%s\"", $cat_name);
 		    my $remaining_amount =
 			$self->sellHighYieldHoldings(\$current_portfolio,
 						     $amount - $extra_to_buy,
 						     $ra_symbol_sell_order,
 						     $rh_holdings_to_maybe_sell,
-						     'Move HY Cat');
+						     $reason);
 		    if ($remaining_amount > $gZero) {
 			printf("Error: Can't sell enough %s for buy in acct %s (\$%.2f remains)\n",
 			       $symbol, $acct_name, $remaining_amount);
@@ -1285,19 +1402,19 @@ sub sellHighYieldInTaxableAccount {
 		my $remaining_amount;
 		$self->sellHoldingsToMakeRoom(\$current_portfolio, $acct_name, $amount,
 					      $symbols_done, \$remaining_amount,
-					      'Make Room in Acct');
+					      "Make Room in Acct $acct_name for $symbol");
 		($remaining_amount > $gZero)
 		    && print "Error: Can't make enough room in acct $acct_name\n";
 
 		# Part 3: Actually buy the new holding.
-		$current_portfolio = $self->rebalanceBuy($symbol, $acct_name, $amount,
-							 'High Yield in Tax Adv Acct');
+		$current_portfolio =
+		    $self->rebalanceBuy($symbol, $acct_name, $amount,
+					"HY Cat \"$cat_name\" to Tax Adv Acct $acct_name");
 
 		$target_value -= $amount;
+		$cat_data->{$kCatBuy} += $amount;
 		$availableTaxAdvantagedValue -= $amount;
 	    }
-
-	    last if ($target_value <= $gZero);
 	}
 	printf("Remaining in tax advantaged accounts = \$%.2f\n",
 	       $availableTaxAdvantagedValue);
@@ -1305,6 +1422,7 @@ sub sellHighYieldInTaxableAccount {
 	last if ($count >= $stop_after);
 	last if ($availableTaxAdvantagedValue <= $gZero);
     }
+    return $symbols_done;
 }
 
 # Sell $amount of the holdings to maybe sell.  Start in taxable
@@ -1408,9 +1526,226 @@ sub sellHighYieldHoldingsFromTaxAdvantagedAccounts {
     return $remaining_amount;
 }
 
+sub rebalance {
+
+    # Symbols_done needs to carry forward here.
+    my($self, $rh_symbols_done) = @_;
+
+    printf("Rebalance: Symbols done: %s\n",
+	   join(", ", sort keys %{$rh_symbols_done}));
+
+    # Need to do most of the work with the current snapshot of the
+    # portfolio as its being rebalanced.  We make a deep copy at each
+    # sell/buy, so this must point to the most recent deep copy.
+    my $current_portfolio = $self;
+    my $num_rebalance_steps = scalar(@{$self->{_rebalTrans}});
+    if ($num_rebalance_steps > 0) {
+	$current_portfolio =
+	    $self->{_rebalTrans}->[$num_rebalance_steps-1]->portfolio();
+    }
+
+    # Stop the loop early for debugging.
+    my $stop_after = 20;
+    my $count = 0;
+    
+    # Go through portfolio categories from highest to lowest
+    # catMaxYield, which is the highest tax adjusted yield of all
+    # possible holdings in the category.  Should we just use the yield
+    # of the optimal holding?  Or of holdings we actually own?
+    #
+    # Sort order still matters here, even though we did the tax
+    # advantaged stuff already.
+    foreach my $cat_name (sort
+		     { $self->{_perCatData}->{$b}->{$kCatYield}
+		       <=> $self->{_perCatData}->{$a}->{$kCatYield} }
+		     keys %{ $self->{_perCatData} }) {
+	my $cat_data = $self->{_perCatData}->{$cat_name};
+	my $target_value = $cat_data->{$kCatTargetValue};
+	printf("Rebalance Buy \$%.2f of %s (previously bought \$%.f)\n",
+	       $target_value, $cat_name, $cat_data->{$kCatBuy});
+    
+	# Make a list of the holdings for this category.  We may end up
+	# selling these.
+	my $alloc = $self->{_assetAllocation};
+	my $category = $alloc->category($cat_name);
+	my $raTickerSymbols = $category->symbols();
+	my $amount_held = 0.0;
+
+	# key is holding key, value is holding value.  If value is 0,
+	# then we've already sold this holding.
+	my $rh_holdings_to_maybe_sell = {};
+	foreach my $cat_symbol (@{ $raTickerSymbols }) {
+	    foreach my $acct_name (keys %{ $current_portfolio->accounts() }) {
+		my $acct = $current_portfolio->accounts()->{$acct_name};
+		foreach my $acct_symbol (keys %{ $acct->holdings() }) {
+		    next unless ($acct_symbol eq $cat_symbol);
+		    my $key = &holdingKey($acct_symbol, $acct_name);
+		    my $holding = $acct->holding($acct_symbol);
+		    my $value = $holding->value();
+		    next if ($value <= $gZero);
+		    $amount_held += $rh_holdings_to_maybe_sell->{$key} = $value;
+		    printf("Maybe sell \$%.2f of %s\n", $value, $key);
+		}
+	    }
+	}
+
+	# If we are already own too much in this category, sell some
+	# of the holdings.
+	my $extra_to_buy = 0.0;
+	my $ra_symbol_sell_order = [ reverse @{ $raTickerSymbols } ];
+	if ( $target_value < $amount_held ) {
+	    my $amount_to_sell = $amount_held - $target_value;
+	    printf("Sell \$%.2f to rebalance\n", $amount_to_sell);
+	    my $reason = sprintf("Sell \$%.2f from Category \"%s\"", $amount_to_sell, $cat_name);
+	    my $remaining_amount =
+		$self->sellHighYieldHoldings(\$current_portfolio,
+					     $amount_to_sell,
+					     $ra_symbol_sell_order,
+					     $rh_holdings_to_maybe_sell,
+					     $reason);
+	    ($remaining_amount > $gZero)
+		&& print "Error: Can't sell enough (initially).\n";
+	} else {
+	    # If we don't own enough of this category, compute how
+	    # much more we'll need to buy.  Below, the code forces
+	    # sales from the targeted accounts that cover whatever we
+	    # end up buying.
+	    $extra_to_buy = $target_value - $amount_held;
+	    printf("Increase holdings by \$%.2f to rebalance\n", $extra_to_buy);
+	}
+
+	# Do a pre-pass to subtract all holdings in this category
+	# that we just bought.
+	foreach my $key (keys %{ $rh_holdings_to_maybe_sell } ) {
+	    my ($symbol, $acct_name) = &parseKey($key);
+	    my $acct = $current_portfolio->account($acct_name);
+	    my $holding = $acct->holding($symbol);
+	    if (defined($rh_symbols_done->{$symbol})) {
+		# Bought during this rebalancing, so it's locked.
+		my $amount = $holding->value();
+		$target_value -= $amount;
+		printf("  Just bought \$%.2f of %s\n",
+		       $amount, $key);
+
+		# Remove this holding from the list of
+		# holdings in this category we might sell.
+		$rh_holdings_to_maybe_sell->{$key} = 0.0;
+	    }
+	}
+	next if ($target_value < $gZero);
+
+    	my $category = $alloc->category($cat_name);
+	my $raTickerSymbols = $category->symbols();
+
+	foreach my $symbol (@{ $raTickerSymbols }) {
+	    printf("  Need to buy \$%.2f, consider symbol %s\n",
+		   $target_value, $symbol);
+
+	    # Subtract holdings of this symbol already owned, but not
+	    # in symbols_done.  This relies on going through the
+	    # symbols in preferred order.  Preferred symbols can
+	    # replace less favored ones, but not vice versa.
+	    foreach my $acct_name (keys %{ $self->accounts() }) {
+		my $acct = $current_portfolio->account($acct_name);
+		foreach my $acct_symbol (keys %{ $acct->holdings() }) {
+		    next unless ($acct_symbol eq $symbol);
+		    next if (defined($rh_symbols_done->{$symbol}));
+		    my $key = &holdingKey($acct_symbol, $acct_name);
+		    my $holding = $acct->holding($symbol);
+		    if ($holding->value() > $gZero) {
+			$target_value -= $holding->value();
+			$cat_data->{$kCatBuy} += $holding->value();
+			printf("    Reduce Buy to \$%.2f -> already hold %s\n",
+			       $target_value, $key);
+
+			# Remove this holding from the list of
+			# holdings in this category we might sell.
+			$rh_holdings_to_maybe_sell->{$key} = 0.0;
+		    }
+		}
+	    }
+
+	    # Now add it to the symbols we've done before we process
+	    # it so that we won't sell any holdings of this symbol.
+	    # They are now locked.
+	    $rh_symbols_done->{$symbol} = 1;
+
+	    # Don't early exit from this loop because we want to add
+	    # all the symbols to symbols_done.
+	    next if ($target_value < $gZero);
+
+	    # Try to buy
+	    my $rh_buys =
+		$self->tryToBuy($current_portfolio, $symbol, $target_value,
+				$rh_symbols_done, $self->accounts());
+
+	    # Handle the buy(s).
+	    foreach my $acct_name (keys %{$rh_buys}) {
+		my $amount = $rh_buys->{$acct_name};
+
+		printf("    Buy \$%.2f in %s\n", $amount, $acct_name);
+		
+		# Part 1: This should be a move of assets from the allocated
+		# amount for this category.  Use up any "extra" cash
+		# first.
+		if ( $extra_to_buy > $amount ) {
+		    $extra_to_buy -= $amount;
+		    printf("  Doing buy from extra_to_buy (\$%.2f remains)\n", $extra_to_buy);
+		} else {
+		    # Now sell enough existing holdings in this category
+		    # to match the buy.  This is effectively a move from
+		    # these accounts to the account to buy in.  Use the
+		    # same order as above when we had too much in this
+		    # category.
+		    my $remaining_amount =
+			$self->sellHighYieldHoldings(\$current_portfolio,
+						     $amount - $extra_to_buy,
+						     $ra_symbol_sell_order,
+						     $rh_holdings_to_maybe_sell,
+						     "Move Cat \"$cat_name\"");
+		    if ($remaining_amount > $gZero) {
+			printf("Error: Can't sell enough %s for buy in acct %s (\$%.2f remains)\n",
+			       $symbol, $acct_name, $remaining_amount);
+			print $remaining_amount, "\n";
+		    }
+		    $extra_to_buy = 0.0;
+		}
+
+		# Part 2: Now we have to make sure there is actually
+		# enough room in the to make the real buy.  This will
+		# use any unallocated funds from account, and then
+		# sell unrelated holdings in the tax advantaged
+		# account to make room.  Selling these unrelated
+		# holdings will likely leave us short in some other
+		# asset category.
+		my $remaining_amount;
+		my $acct = $current_portfolio->account($acct_name);
+		if ($acct->fixed_size()) {
+		    $self->sellHoldingsToMakeRoom(\$current_portfolio, $acct_name, $amount,
+						  $rh_symbols_done, \$remaining_amount,
+						  "Make Room in Acct $acct_name for $symbol");
+		    ($remaining_amount > $gZero)
+			&& print "Error: Can't make enough room in acct $acct_name\n";
+		     }
+
+		# Part 3: Actually buy the new holding.
+		$current_portfolio =
+		    $self->rebalanceBuy($symbol, $acct_name, $amount,
+					sprintf("Increase Cat \"%s\" by \$%.2f", $cat_name, $amount));
+
+		$target_value -= $amount;
+		$cat_data->{$kCatBuy} += $amount;
+	    }
+	}
+	$count++;
+	last if ($count >= $stop_after);
+    }
+}
+
 # returns hash reference to $buys (defined below).
 sub tryToBuy {
-    my($self, $symbol, $amount, $rh_symbols_done, $rh_accts) = @_;
+    my($self, $current_portfolio, $symbol,
+       $amount, $rh_symbols_done, $rh_accts) = @_;
 
     my $acct_capacities = {};  # Hash by acct name
     my $buys = {};  # Hash by acct name, value is amount to buy
@@ -1420,10 +1755,12 @@ sub tryToBuy {
     my $total_available_capacity = 0.0;
     my $accts_that_can_hold_entire_buy = [];
     my $accts_holding_this_symbol = [];
+    my $accts_previously_holding_symbol = [];
     foreach my $acct_name (keys %{$rh_accts}) {
-	my $capacity = 
-	    $self->acctCapacityForSymbol($acct_name, $symbol, $rh_symbols_done,
-	    $accts_holding_this_symbol);
+	my $capacity = $self->acctCapacityForSymbol(
+	    $current_portfolio, $acct_name, $symbol, $rh_symbols_done,
+	    $accts_holding_this_symbol, $accts_previously_holding_symbol,
+	    $amount);
 	$acct_capacities->{$acct_name} = $capacity;
 	$total_available_capacity += $capacity;
 	push @{$accts_that_can_hold_entire_buy}, $acct_name
@@ -1432,7 +1769,7 @@ sub tryToBuy {
 	       $acct_name, $capacity, $symbol);
     }
 
-    if ($total_available_capacity == 0.0) {
+    if ($total_available_capacity <= $gZero) {
 	printf("    No available capacity\n");
 	return $buys;
     }
@@ -1442,22 +1779,39 @@ sub tryToBuy {
 	  join(", ", @$accts_that_can_hold_entire_buy), "\n");
     print("    Accts holding this symbol:",
 	  join(", ", @$accts_holding_this_symbol), "\n");
-    my $isect = &Util::intersect($accts_that_can_hold_entire_buy,
-				 $accts_holding_this_symbol);
-    if (scalar(@$isect) > 0) {
-	# Select one with the smallest account value.
-	my @acct_names = sort { $self->accounts->{$a}->value()
-				    <=> $self->accounts->{$b}->value() } @$isect;
+    print("    Accts previously holding this symbol:",
+	  join(", ", @$accts_previously_holding_symbol), "\n");
+    my $current_and_big_enough = &Util::intersect($accts_that_can_hold_entire_buy,
+						  $accts_holding_this_symbol);
+    my $previous_and_big_enough = &Util::intersect($accts_that_can_hold_entire_buy,
+						   $accts_previously_holding_symbol);
+    print("    Current and big enough:",
+	  join(", ", @$current_and_big_enough), "\n");
+    print("    Previous and big enough:",
+	  join(", ", @$previous_and_big_enough), "\n");
+    if (scalar(@$current_and_big_enough) > 0) {
+	# Select by priority
+	my @acct_names = sort { $current_portfolio->accounts->{$a}->priority()
+				    <=> $current_portfolio->accounts->{$b}->priority() }
+	                 @$current_and_big_enough;
 	$buys->{$acct_names[0]} = $amount;
-	printf("    Buy from %s: smallest account with existing holding\n",
+	printf("    Buy from %s: highest priority account with existing holding\n",
+	       $acct_names[0]);
+    } elsif (scalar(@$previous_and_big_enough) > 0) {
+	# Select by priority
+	my @acct_names = sort { $current_portfolio->accounts->{$a}->priority()
+				    <=> $current_portfolio->accounts->{$b}->priority() }
+	                 @$previous_and_big_enough;
+	$buys->{$acct_names[0]} = $amount;
+	printf("    Buy from %s: highest priority account with previous holding\n",
 	       $acct_names[0]);
     } elsif (scalar(@$accts_that_can_hold_entire_buy)) {
-	# Use the smallest account that can hold the entire amount.
-	my @acct_names = sort { $self->accounts->{$a}->value()
-				    <=> $self->accounts->{$b}->value() }
-	                   @$accts_that_can_hold_entire_buy;
+	# Select by priority
+	my @acct_names = sort { $current_portfolio->accounts->{$a}->priority()
+				    <=> $current_portfolio->accounts->{$b}->priority() }
+	                 @$accts_that_can_hold_entire_buy;
 	$buys->{$acct_names[0]} = $amount;
-	printf("    Buy from %s: smallest account that can hold it\n",
+	printf("    Buy from %s: highest priority account that can hold it\n",
 	       $acct_names[0]);
     } else {
 
@@ -1504,16 +1858,26 @@ sub tryToBuy {
     return $buys;
 }
 
-# Returns dollar amount this account can hold of this symbol.
+# Returns dollar amount this account can hold of this symbol, up to
+# buy amount.
 sub acctCapacityForSymbol {
-    my($self, $acct_name, $symbol, $rh_symbols_done, $ra_symbol_found) = @_;
+    my($self, $current_portfolio, $acct_name, $symbol,
+       $rh_symbols_done, $ra_symbol_found, $ra_original_symbol_found,
+       $buy_amount) = @_;
 
     # Can this account hold this symbol at all?
-    my $acct = $self->accounts()->{$acct_name};
+    my $acct = $current_portfolio->accounts()->{$acct_name};
     if (defined $acct->allowed_tickers()) {
 	my $isect = &Util::intersect([$symbol], $acct->allowed_tickers());
 	if (0 == scalar(@$isect)) {
-	    printf("      Symbol %s: can't be held in adv acct %s\n",
+	    printf("      Symbol %s: not allowed in adv acct %s\n",
+		   $symbol, $acct_name);
+	    return 0.0;
+	}
+    } elsif (defined $acct->disallowed_tickers()) {
+	my $isect = &Util::intersect([$symbol], $acct->disallowed_tickers());
+	if (0 < scalar(@$isect)) {
+	    printf("      Symbol %s: disallowed in adv acct %s\n",
 		   $symbol, $acct_name);
 	    return 0.0;
 	}
@@ -1548,7 +1912,26 @@ sub acctCapacityForSymbol {
 	    push @$ra_symbol_found, $acct_name;
 	}
     }
-    return $amount;
+
+    # See if this symbol was held in the original portfolio.
+    my $acct = $self->accounts()->{$acct_name};
+    foreach my $held_symbol (keys %{ $acct->holdings() }) {
+	next if ($acct->holding($held_symbol)->value() < $gZero);
+	printf("      \$%.2f of %s was originally in acct %s\n",
+	       $acct->holding($held_symbol)->value(), $held_symbol,
+	       $acct_name);
+	if ($held_symbol eq $symbol) {
+	    push @$ra_original_symbol_found, $acct_name;
+	}
+    }
+    if ($acct->fixed_size()) {
+	return &Util::minimum($amount, $buy_amount);
+    } else {
+	# If the account doesn't have fixed size, it can hold the
+	# entire amount.  Still need to do loop above to compute out
+	# parameters.
+	return $buy_amount;
+    }
 }
 
 # Returns 1 if holding in this account is locked, e.g. because it was just
@@ -1725,6 +2108,9 @@ sub oneLinePortfolioColumnHeaders {
     my $column_headers = [
 	$kRebalReason,
 	$kRebalKey,
+	$kRebalSymbol,
+	$kRebalAccount,
+	$kRebalCategory,
 	$kRebalAction,
 	$kRebalShares,
 	$kRebalAmount,
@@ -1742,9 +2128,17 @@ sub oneLinePortfolioColumnHeaders {
 	    $rh_symbols_in_acct->{$acct_name} = {}
 	      unless (defined $rh_symbols_in_acct->{$acct_name});
 	    my $acct = $portfolio->account($acct_name);
+	    
 	    if ( $acct->value() > $gZero ) {
+		# For accounts that don't easily support moving money
+		# in/out, keep track of the unallocated money
+		# separately as well as in $kRebalUnallocated.
+		if ( $acct->unallocated() > $gZero ) {
+		    # Must match key in printOneLinePortfolioString.
+		    my $key = sprintf("_", $acct_name);
+		    $rh_symbols_in_acct->{$acct_name}->{$key}++;
+		}
 		foreach my $symbol (keys %{ $acct->holdings() }) {
-		    my $key = &holdingKey($symbol, $acct_name);
 		    my $holding = $acct->holding($symbol);
 		    if ($holding->value() > $gZero) {
 			$rh_symbols_in_acct->{$acct_name}->{$symbol}++;
@@ -1756,11 +2150,6 @@ sub oneLinePortfolioColumnHeaders {
 
     # Now build the columns headers
     foreach my $acct_name (sort keys %{$rh_symbols_in_acct}) {
-	# For accounts that don't easily support moving money in/out,
-	# keep track of the unallocated money separately as well as in
-	# $kRebalUnallocated.
-	push @{$column_headers}, sprintf("%s unalloc", $acct_name);
-	
 	foreach my $symbol (sort keys %{$rh_symbols_in_acct->{$acct_name}}) {
 	    my $key = &holdingKey($symbol, $acct_name);
 	    push @{$column_headers}, $key;
@@ -1786,8 +2175,15 @@ sub printOneLinePortfolioString {
 	if (ref($transaction) ne 'Transaction') {
 	    print "ERROR: transaction argument must be a Transaction.";
 	}
-	$row->{$kRebalKey} = &holdingKey($transaction->symbol(),
-					 $transaction->account());
+	my $symbol = $transaction->symbol();
+	my $key = &holdingKey($symbol,
+			      $transaction->account());
+	$row->{$kRebalKey} = $key;
+	$row->{$kRebalSymbol} = $transaction->symbol();
+	$row->{$kRebalAccount} = $transaction->account();
+	my $hold_data = $self->{_perHoldingData}->{$key};
+	$row->{$kRebalCategory} = 
+	    $self->assetAllocation()->symbols()->{$symbol}->name();
 	$row->{$kRebalAction} = $transaction->action();
 	$row->{$kRebalShares} = $transaction->shares();
 	$row->{$kRebalAmount} = $transaction->amount();
@@ -1798,7 +2194,7 @@ sub printOneLinePortfolioString {
     foreach my $acct_name (keys %{ $self->accounts() }) {
 	my $acct = $self->accounts()->{$acct_name};
 	if ( $acct->value() > $gZero ) {
-	    my $key = sprintf("unalloc %s", $acct->name());
+	    my $key = sprintf("_/%s", $acct->name());
 	    $row->{$key} = $acct->unallocated();
 	}
 	foreach my $symbol (keys %{ $acct->holdings() }) {

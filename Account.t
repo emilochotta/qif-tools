@@ -20,11 +20,12 @@ sub test_new : Test(2) {
 };
 
 # Test reading an account from a QIF file
-sub test_from_qif : Test(14) {
+sub test_from_qif : Test(15) {
     my $a = Account::newFromQif('etrade', 'account.qif');
     ok(defined($a), 'Account object was created');
     ok($a->isa('Account'), 'Account object isa Account');
     is($a->name(), 'etrade', 'Set Name as Expected.');
+    is($a->priority(), 100, 'Set Priority as Expected.');
     is($a->qif_filename(), 'account.qif', 'Set Filename as Expected.');
     is(ref($a->holdings()), 'HASH', 'Holdings are a hash');
     my @k = keys %{$a->holdings()};
@@ -39,7 +40,7 @@ sub test_from_qif : Test(14) {
     $a->printToStringArray($raStrings,
 			   '',  # Prefix
 			   1);  # Print Transactions
-    is(@$raStrings, 179, 'Returned expected number of strings');
+    is(@$raStrings, 191, 'Returned expected number of strings');
     is($raStrings->[0], 'Account: "etrade"', 'Printed');
     print join("\n", @$raStrings);
     my $raCsv = [];
