@@ -35,6 +35,11 @@ my $gCashSymbol = 'cs';
 # all other factors being equal.
 my $gPriority = 'pr';
 
+# Alias accounts.  In vanguard, the mutual fund and brokerage parts of
+# an account are modeled as two separate accounts.  But them back
+# together here because rebalancing is difficult otherwise.
+my $gAlias = 'al';
+
 our $gAccountInfo = {
     'account1' => {
 	$gTaxAdvantaged => 0,
@@ -310,20 +315,6 @@ our $gAccountInfo = {
 	    ],
 	$gPriority => 2,
     },
-    'van-roth-brokerage', => {
-	$gTaxAdvantaged => 1,
-	$gFixedSize => 1,
-	$gCashSymbol => undef,
-	$gDisallowedTickers => [
-	    'PAAIX',  # Institutional
-	    'PTTRX',  # Institutional
-	    'VEMPX',  # Institutional
-	    'VIIIX',  # Institutional
-	    'VMISX',  # Institutional
-	    'VSISX',  # Institutional
-	    ],
-	$gPriority => 4,
-    },
     'van-roth-mfs', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
@@ -338,10 +329,27 @@ our $gAccountInfo = {
 	    ],
 	$gPriority => 4,
     },
-    'van-trad-ira-brok', => {
+    'van-roth-brokerage', => {
+	$gAlias => 'van-roth-mfs',
+    },
+#     'van-roth-brokerage', => {
+# 	$gTaxAdvantaged => 1,
+# 	$gFixedSize => 1,
+# 	$gCashSymbol => undef,
+# 	$gDisallowedTickers => [
+# 	    'PAAIX',  # Institutional
+# 	    'PTTRX',  # Institutional
+# 	    'VEMPX',  # Institutional
+# 	    'VIIIX',  # Institutional
+# 	    'VMISX',  # Institutional
+# 	    'VSISX',  # Institutional
+# 	    ],
+# 	$gPriority => 4,
+#     },
+    'van-trad-ira', => {
 	$gTaxAdvantaged => 1,
 	$gFixedSize => 1,
-	$gCashSymbol => $Ticker::kCash,
+	$gCashSymbol => 'VMMXX',
 	$gDisallowedTickers => [
 	    'PAAIX',  # Institutional
 	    'PTTRX',  # Institutional
@@ -352,6 +360,23 @@ our $gAccountInfo = {
 	    ],
 	$gPriority => 5,
     },
+     'van-trad-ira-brok', => {
+	$gAlias => 'van-trad-ira',
+     },
+#     'van-trad-ira-brok', => {
+# 	$gTaxAdvantaged => 1,
+# 	$gFixedSize => 1,
+# 	$gCashSymbol => $Ticker::kCash,
+# 	$gDisallowedTickers => [
+# 	    'PAAIX',  # Institutional
+# 	    'PTTRX',  # Institutional
+# 	    'VEMPX',  # Institutional
+# 	    'VIIIX',  # Institutional
+# 	    'VMISX',  # Institutional
+# 	    'VSISX',  # Institutional
+# 	    ],
+# 	$gPriority => 5,
+#     },
 };
 
 #-----------------------------------------------------------------
@@ -476,6 +501,7 @@ sub newAccountsFromQifDir {
 # name is to specify it.
 sub newFromQif
 {
+    # TODO: taxable looks like it is never specified and can be removed.
     my ($account_name, $qif_filename, $taxable) = @_;
 
     $gDebug && print("Read Account from $qif_filename: \n");
@@ -485,6 +511,10 @@ sub newFromQif
     # the new transactions will be appended to it.
     my $account;
     my $holdings;
+    if (defined($gAccountInfo->{$account_name}->{$gAlias})) {
+	$account_name = $gAccountInfo->{$account_name}->{$gAlias};
+	$gDebug && print("  Treating as account $account_name: \n");
+    }
     if (defined($gAccountsByName->{$account_name})) {
 	$account = $gAccountsByName->{$account_name};
 	$holdings = $account->{_holdings};

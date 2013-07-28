@@ -62,7 +62,7 @@ sub main {
     print join("\n", @lines), "\n";
 
     #
-    # TODO: Transport CombineTransactions from the old version
+    # Transport CombineTransactions from the old version
     # so that there aren't multiple events on the same day.
     #
     # TODO: Generate multiple spreadsheets per portfolio based
@@ -82,7 +82,7 @@ sub main {
     }
 
     # 
-    # TODO: Bring in portfolio definitions and add support for
+    # Bring in portfolio definitions and add support for
     # rebalancing portfolios.
     &Read_Asset_Allocation_Csv_Per_Portfolio( $rhPortfolios );
     foreach my $portfolioName ( keys %{ $rhPortfolios } ) {

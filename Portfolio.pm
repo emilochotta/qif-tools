@@ -50,9 +50,10 @@ our %PortfolioDefs = (
 	'van-goog-401k',
 	'van-mut-funds',
 	'van-rollover-ira',
-	'van-roth-brokerage',
+#	'van-roth-brokerage',
 	'van-roth-mfs',
-	'van-trad-ira-brok',
+	'van-trad-ira',
+#	'van-trad-ira-brok',
     ],	
     'me' => [
 	'etrade',
@@ -69,9 +70,10 @@ our %PortfolioDefs = (
 	'van-goog-401k',
 	'van-mut-funds',
 	'van-rollover-ira',
-	'van-roth-brokerage',
+#	'van-roth-brokerage',
 	'van-roth-mfs',
-	'van-trad-ira-brok',
+	'van-trad-ira',
+#	'van-trad-ira-brok',
     ],	
     'amo' => [
 	'schwab-annabelle',
@@ -155,12 +157,13 @@ my $kHoldConsolidate = 'Multiple Accounts';
 # _rebalInstructions hash names / CSV column header names.  These are
 # only the first few columns.  The remainder of the columns names are
 # holding keys (i.e. $kHoldKey).
+my $kRebalId = 'ID';
 my $kRebalKey = 'Key';
 my $kRebalSymbol = 'Ticker';
 my $kRebalAccount = 'Account';
 my $kRebalCategory = 'Category';
 my $kRebalAction = 'Action';
-my $kRebalReason = 'Reason';
+my $kRebalReason = 'Instruction';
 my $kRebalShares = 'Shares';
 my $kRebalAmount = 'Amount';
 my $kRebalValue = 'Invested Value';
@@ -208,9 +211,8 @@ sub new
 	# accounts.)
 	_value => shift,
 
-	# Intermediate value used for rebalancing.  Cash value of sa
-	# les.  Calculated from holdings (not
-	# accounts.)
+	# Intermediate value used for rebalancing.  Cash value of
+	# sales.  Calculated from holdings (not accounts.)
 	_unallocated => shift,
 
 	# Total return (percent).
@@ -218,6 +220,11 @@ sub new
 
 	# Internal Rate of Return -- Annualized personal rate of return.
 	_irr => shift,
+
+	# Rebalance sales.  Just to keep track of whether the instructions
+	# can say "Sell all" or "Sell Remaining".  Keyed by the
+	# per holding key.
+	_sales => shift,
 
     };
     if (defined($self->{_name}) &&
@@ -232,6 +239,9 @@ sub new
     }
     if (!defined($self->{_rebalTrans})) {
 	$self->{_rebalTrans} = [];
+    }
+    if (!defined($self->{_sales})) {
+	$self->{_sales} = {};
     }
     
     bless $self, $class;
@@ -264,6 +274,9 @@ sub newDeepCopy
 	$self->rebalTrans(),      # Shallow copy
 	$self->value(),
 	$self->unallocated(),
+	$self->roi(),
+	$self->irr(),
+	$self->sales(),
     );
 }
 
@@ -280,6 +293,7 @@ sub value { $_[0]->{_value}; }
 sub unallocated { $_[0]->{_unallocated}; }
 sub roi { $_[0]->{_roi}; }
 sub irr { $_[0]->{_irr}; }
+sub sales { $_[0]->{_sales}; }
 
 sub SetAssetAllocation { $_[0]->{_assetAllocation} = $_[1]; }
 
@@ -1106,16 +1120,16 @@ sub computeIRR {
     $mm++;
     my $date_string = sprintf("%04d-%02d-%02d", $yyyy, $mm, $dd);
     $rh_cashflow->{$date_string} = -1 * ($value + $returned_capital);
-    printf("Cashflow for %s:\n", $label);
-    foreach my $date (sort keys %{$rh_cashflow}) {
-	printf("  %s => \$%.2f,\n", $date, $rh_cashflow->{$date});
-    }
+#     printf("Cashflow for %s:\n", $label);
+#     foreach my $date (sort keys %{$rh_cashflow}) {
+# 	printf("  %s => \$%.2f,\n", $date, $rh_cashflow->{$date});
+#     }
     my $irr = xirr(%{$rh_cashflow}, precision => 0.001);
-    if ( defined $irr ) {
-	printf("  xirr is %.2f%%\n", 100.0 * $irr);
-    } else {
-	printf("ERROR: xirr is undefined for %s\n", $label);
-    }
+#     if ( defined $irr ) {
+# 	printf("  xirr is %.2f%%\n", 100.0 * $irr);
+#     } else {
+# 	printf("ERROR: xirr is undefined for %s\n", $label);
+#     }
     return $irr;
 }
 
@@ -1192,7 +1206,9 @@ sub printTickerLinesString {
     }
 }
 
-# 
+#
+# Function rebalance below is really similar.  If you make changes
+# here, they may apply there too.
 sub sellHighYieldInTaxableAccount {
     my($self) = @_;
 
@@ -1267,18 +1283,20 @@ sub sellHighYieldInTaxableAccount {
 
 	# If we are already own too much in this category, sell some
 	# of the holdings.
-	my $extra_to_buy = 0.0;
+	my $buy_in_this_category = 0.0;
 	my $ra_symbol_sell_order = [ reverse @{ $raTickerSymbols } ];
 	if ( $target_value < $amount_held ) {
 	    my $amount_to_sell = $amount_held - $target_value;
 	    printf("Sell \$%.2f to rebalance\n", $amount_to_sell);
-	    my $reason = sprintf("Sell \$%.2f from HY Category \"%s\"", $amount_to_sell, $cat_name);
+	    my $reason = sprintf(" to reduce HY Category \"%s\" by \$%.2f",
+				 $cat_name, $amount_to_sell);
 	    my $remaining_amount =
 		$self->sellHighYieldHoldings(\$current_portfolio,
 					     $amount_to_sell,
 					     $ra_symbol_sell_order,
 					     $rh_holdings_to_maybe_sell,
-					     $reason);
+					     $reason,
+					     undef); # Account name not needed
 	    ($remaining_amount > $gZero)
 		&& print "Error: Can't sell enough (initially).\n";
 	} else {
@@ -1286,8 +1304,8 @@ sub sellHighYieldInTaxableAccount {
 	    # much more we'll need to buy.  Below, the code forces
 	    # sales from the targeted accounts that cover whatever we
 	    # end up buying.
-	    $extra_to_buy = $target_value - $amount_held;
-	    printf("Increase holdings by \$%.2f to rebalance\n", $extra_to_buy);
+	    $buy_in_this_category = $target_value - $amount_held;
+	    printf("Increase holdings by \$%.2f to rebalance\n", $buy_in_this_category);
 	}
 
 	# Subtract taxable holdings in this category that we'd be
@@ -1368,48 +1386,77 @@ sub sellHighYieldInTaxableAccount {
 		# Part 1: This should be a move of assets from the allocated
 		# amount for this category.  Use up any "extra" cash
 		# first.
-		if ( $extra_to_buy > $amount ) {
-		    $extra_to_buy -= $amount;
-		    printf("  Doing buy from extra_to_buy (\$%.2f remains)\n", $extra_to_buy);
+		my $previously_unallocated = $current_portfolio->account($acct_name)->unallocated();
+		if ( $buy_in_this_category > $amount ) {
+		    $buy_in_this_category -= $amount;
+		    printf("  Doing buy from buy_in_this_category (\$%.2f remains)\n",
+			   $buy_in_this_category);
 		} else {
 		    # Now sell enough existing holdings in this category
 		    # to match the buy.  This is effectively a move from
 		    # these accounts to the account to buy in.  Use the
 		    # same order as above when we had too much in this
 		    # category.
-		    my $reason = sprintf("Move HY Cat \"%s\"", $cat_name);
+		    my $reason = sprintf(" to move %s (\"%s\") to Acct \"%s\" (Tax)",
+					 $symbol, $cat_name, $acct_name);
+		    my $amount_to_sell = $amount - $buy_in_this_category;
 		    my $remaining_amount =
 			$self->sellHighYieldHoldings(\$current_portfolio,
-						     $amount - $extra_to_buy,
+						     $amount_to_sell,
 						     $ra_symbol_sell_order,
 						     $rh_holdings_to_maybe_sell,
-						     $reason);
+						     $reason,
+						     $acct_name);
 		    if ($remaining_amount > $gZero) {
 			printf("Error: Can't sell enough %s for buy in acct %s (\$%.2f remains)\n",
 			       $symbol, $acct_name, $remaining_amount);
 			print $remaining_amount, "\n";
 		    }
-		    $extra_to_buy = 0.0;
+		    $buy_in_this_category = 0.0;
 		}
 
-		# Part 2: Now we have to make sure there is actually
-		# enough room in the to make the real buy.  This will
-		# use any unallocated funds from account, and then
-		# sell unrelated holdings in the tax advantaged
-		# account to make room.  Selling these unrelated
-		# holdings will likely leave us short in some other
-		# asset category.
+		# Part 2: If some of the sales in sellHighYieldHoldings
+		# happened to be in the same account as the buy, then
+		# there will be unallocated cash in the account.  Use
+		# this up first.  This should always be less than the
+		# total buy_in_this_category.
+		my $amount_to_sell = $amount;
+		my $unallocated = $current_portfolio->account($acct_name)->unallocated();
+		my $amount_sold = $unallocated - $previously_unallocated;
+		if ($unallocated > 0.0) {
+		    printf("        Previous sale freed up \$%.2f in $acct_name\n",
+			   $unallocated);
+		    $amount_to_sell -= $unallocated;
+		}
+		
+		# Part 3: Now we have to make sure there is actually
+		# enough room in the account to make the real buy.
+		# This will use any unallocated funds from account,
+		# and then sell unrelated holdings in the tax
+		# advantaged account to make room.  Selling these
+		# unrelated holdings will likely leave us short in
+		# some other asset category.
 		my $remaining_amount;
-		$self->sellHoldingsToMakeRoom(\$current_portfolio, $acct_name, $amount,
-					      $symbols_done, \$remaining_amount,
-					      "Make Room in Acct $acct_name for $symbol");
-		($remaining_amount > $gZero)
-		    && print "Error: Can't make enough room in acct $acct_name\n";
+		my $acct = $current_portfolio->account($acct_name);
+		my $exchanged = $amount;
+		if ($acct->fixed_size()) {
+		    $self->sellHoldingsToMakeRoom(\$current_portfolio, $acct_name, $amount_to_sell,
+						  $symbols_done, \$remaining_amount,
+						  " to $symbol", 'Exchange');
+		    ($remaining_amount > $gZero)
+			&& printf("Error: Can't make enough room in acct $acct_name, \$%.2f more needed\n",
+				  $remaining_amount);
+		    $exchanged = $amount - ($amount_sold + $amount_to_sell);
+		}
 
-		# Part 3: Actually buy the new holding.
+		# Part 4: Actually buy the new holding.
+		my $exchanged = $amount - ($amount_sold + $amount_to_sell);
+		my $reason = ($exchanged < $gZero) ?
+		    "Balance as result of previous exchange(s) to $symbol(\"$cat_name\")" :
+		    "Buy $symbol in \"$acct_name\" for HY Cat \"$cat_name\" (Tax)";
+		my $exchange = ($exchanged < $gZero) ? 'Exchange' : undef;
 		$current_portfolio =
-		    $self->rebalanceBuy($symbol, $acct_name, $amount,
-					"HY Cat \"$cat_name\" to Tax Adv Acct $acct_name");
+		    $self->rebalanceBuy($symbol, $acct_name, $amount, $reason, $exchange);
 
 		$target_value -= $amount;
 		$cat_data->{$kCatBuy} += $amount;
@@ -1431,22 +1478,25 @@ sub sellHighYieldInTaxableAccount {
 sub sellHighYieldHoldings {
     my($self,
        $r_current_portfolio,
-       $total_amount,  # Need to generate this amount of cash
-       $ra_symbol_sell_order,  # Choose holdings using this symbol order
+       $total_amount,               # Need to generate this amount of cash
+       $ra_symbol_sell_order,       # Choose holdings using this symbol order
        $rh_holdings_to_maybe_sell,  # Sell these holdings
        $reason,                     # Explanation
+       $buy_acct_name,              # If this sell is in preparation
+				    # for a buy, name of account where
+				    # the buy will take place.
 	) = @_;
     
     my $remaining_amount =
 	$self->sellHighYieldHoldingsFromTaxableAccounts(
 	    $r_current_portfolio, $total_amount, $ra_symbol_sell_order,
-	    $rh_holdings_to_maybe_sell, $reason);
+	    $rh_holdings_to_maybe_sell, $reason, $buy_acct_name);
 
     if ($remaining_amount > 0.0) {
 	$remaining_amount =
 	    $self->sellHighYieldHoldingsFromTaxAdvantagedAccounts(
 		$r_current_portfolio, $remaining_amount, $ra_symbol_sell_order,
-		$rh_holdings_to_maybe_sell, $reason);
+		$rh_holdings_to_maybe_sell, $reason, $buy_acct_name);
     }
     return $remaining_amount;
 }
@@ -1459,6 +1509,9 @@ sub sellHighYieldHoldingsFromTaxableAccounts {
        $ra_symbol_sell_order,       # Choose holdings using this symbol order
        $rh_holdings_to_maybe_sell,  # Sell these holdings
        $reason,                     # Explanation
+       $buy_acct_name,              # If this sell is in preparation
+				    # for a buy, name of account where
+				    # the buy will take place.
 	) = @_;
 
     return $total_amount if ($total_amount <= $gZero);
@@ -1475,9 +1528,12 @@ sub sellHighYieldHoldingsFromTaxableAccounts {
 		my $sell_amount =
 		    &Util::minimum($holding->value(),$rh_holdings_to_maybe_sell->{$acct_key});
 		my $sell_amount = &Util::minimum($remaining_amount, $sell_amount);
+		my $exchange = (defined($buy_acct_name) && ($buy_acct_name eq $acct_name))
+		    ? 'Exchange' : 'Sell';
 		if ($sell_amount > $gZero) {
 		    $$r_current_portfolio =
-			$self->rebalanceSale($acct_symbol, $acct_name, $sell_amount, $reason);
+			$self->rebalanceSale($acct_symbol, $acct_name, $sell_amount,
+					     $reason, $exchange);
 		    $remaining_amount -= $sell_amount;
 		    return $remaining_amount if ($remaining_amount <= $gZero);
 		}
@@ -1496,6 +1552,9 @@ sub sellHighYieldHoldingsFromTaxAdvantagedAccounts {
        $ra_symbol_sell_order,       # Choose holdings using this symbol order
        $rh_holdings_to_maybe_sell,  # Sell these holdings
        $reason,                     # Explanation
+       $buy_acct_name,              # If this sell is in preparation
+				    # for a buy, name of account where
+				    # the buy will take place.
 	) = @_;
 
     return $total_amount if ($total_amount <= $gZero);
@@ -1514,9 +1573,12 @@ sub sellHighYieldHoldingsFromTaxAdvantagedAccounts {
 		my $sell_amount =
 		    &Util::minimum($holding->value(),$rh_holdings_to_maybe_sell->{$acct_key});
 		my $sell_amount = &Util::minimum($remaining_amount, $sell_amount);
+		my $exchange = (defined($buy_acct_name) && ($buy_acct_name eq $acct_name))
+		    ? 'Exchange' : 'Sell';
 		if ($sell_amount > $gZero) {
 		    $$r_current_portfolio =
-			$self->rebalanceSale($acct_symbol, $acct_name, $sell_amount, $reason);
+			$self->rebalanceSale($acct_symbol, $acct_name, $sell_amount,
+					     $reason, $exchange);
 		    $remaining_amount -= $sell_amount;
 		    return $remaining_amount if ($remaining_amount <= $gZero);
 		}
@@ -1591,18 +1653,19 @@ sub rebalance {
 
 	# If we are already own too much in this category, sell some
 	# of the holdings.
-	my $extra_to_buy = 0.0;
+	my $buy_in_this_category = 0.0;
 	my $ra_symbol_sell_order = [ reverse @{ $raTickerSymbols } ];
 	if ( $target_value < $amount_held ) {
 	    my $amount_to_sell = $amount_held - $target_value;
 	    printf("Sell \$%.2f to rebalance\n", $amount_to_sell);
-	    my $reason = sprintf("Sell \$%.2f from Category \"%s\"", $amount_to_sell, $cat_name);
+	    my $reason = sprintf(" to reduce Category \"%s\" by \$%.2f", $cat_name, $amount_to_sell);
 	    my $remaining_amount =
 		$self->sellHighYieldHoldings(\$current_portfolio,
 					     $amount_to_sell,
 					     $ra_symbol_sell_order,
 					     $rh_holdings_to_maybe_sell,
-					     $reason);
+					     $reason,
+					     undef);  # Not preparing for a matching buy
 	    ($remaining_amount > $gZero)
 		&& print "Error: Can't sell enough (initially).\n";
 	} else {
@@ -1610,8 +1673,8 @@ sub rebalance {
 	    # much more we'll need to buy.  Below, the code forces
 	    # sales from the targeted accounts that cover whatever we
 	    # end up buying.
-	    $extra_to_buy = $target_value - $amount_held;
-	    printf("Increase holdings by \$%.2f to rebalance\n", $extra_to_buy);
+	    $buy_in_this_category = $target_value - $amount_held;
+	    printf("Increase holdings by \$%.2f to rebalance\n", $buy_in_this_category);
 	}
 
 	# Do a pre-pass to subtract all holdings in this category
@@ -1688,30 +1751,50 @@ sub rebalance {
 		# Part 1: This should be a move of assets from the allocated
 		# amount for this category.  Use up any "extra" cash
 		# first.
-		if ( $extra_to_buy > $amount ) {
-		    $extra_to_buy -= $amount;
-		    printf("  Doing buy from extra_to_buy (\$%.2f remains)\n", $extra_to_buy);
+		my $previously_unallocated = $current_portfolio->account($acct_name)->unallocated();
+		if ( $buy_in_this_category > $amount ) {
+		    $buy_in_this_category -= $amount;
+		    printf("  Doing buy from buy_in_this_category (\$%.2f remains)\n",
+			   $buy_in_this_category);
 		} else {
 		    # Now sell enough existing holdings in this category
 		    # to match the buy.  This is effectively a move from
 		    # these accounts to the account to buy in.  Use the
 		    # same order as above when we had too much in this
 		    # category.
+		    my $reason = sprintf(" to move %s (\"%s\") to Acct \"%s\" (Rebal)",
+					 $symbol, $cat_name, $acct_name);
+		    my $amount_to_sell = $amount - $buy_in_this_category;
 		    my $remaining_amount =
 			$self->sellHighYieldHoldings(\$current_portfolio,
-						     $amount - $extra_to_buy,
+						     $amount_to_sell,
 						     $ra_symbol_sell_order,
 						     $rh_holdings_to_maybe_sell,
-						     "Move Cat \"$cat_name\"");
+						     $reason,
+						     $acct_name);
 		    if ($remaining_amount > $gZero) {
 			printf("Error: Can't sell enough %s for buy in acct %s (\$%.2f remains)\n",
 			       $symbol, $acct_name, $remaining_amount);
 			print $remaining_amount, "\n";
 		    }
-		    $extra_to_buy = 0.0;
+		    $buy_in_this_category = 0.0;
+		}
+		
+		# Part 2: If some of the sales in sellHighYieldHoldings
+		# happened to be in the same account as the buy, then
+		# there will be unallocated cash in the account.  Use
+		# this up first.  This should always be less than the
+		# total buy_in_this_category.
+		my $amount_to_sell = $amount;
+		my $unallocated = $current_portfolio->account($acct_name)->unallocated();
+		my $amount_sold = $unallocated - $previously_unallocated;
+		if ($unallocated > 0.0) {
+		    printf("        Previous sale freed up \$%.2f in $acct_name\n",
+			   $unallocated);
+		    $amount_to_sell -= $unallocated;
 		}
 
-		# Part 2: Now we have to make sure there is actually
+		# Part 3: Now we have to make sure there is actually
 		# enough room in the to make the real buy.  This will
 		# use any unallocated funds from account, and then
 		# sell unrelated holdings in the tax advantaged
@@ -1720,18 +1803,24 @@ sub rebalance {
 		# asset category.
 		my $remaining_amount;
 		my $acct = $current_portfolio->account($acct_name);
+		my $exchanged = $amount;
 		if ($acct->fixed_size()) {
-		    $self->sellHoldingsToMakeRoom(\$current_portfolio, $acct_name, $amount,
+		    $self->sellHoldingsToMakeRoom(\$current_portfolio, $acct_name, $amount_to_sell,
 						  $rh_symbols_done, \$remaining_amount,
-						  "Make Room in Acct $acct_name for $symbol");
+						  " to $symbol", 'Exchange');
 		    ($remaining_amount > $gZero)
 			&& print "Error: Can't make enough room in acct $acct_name\n";
-		     }
+		    $exchanged = $amount - ($amount_sold + $amount_to_sell);
+		}
 
-		# Part 3: Actually buy the new holding.
+		# Part 4: Actually buy the new holding.
+		my $reason = ($exchanged < $gZero) ?
+		    "Balance as result of previous exchange(s) to $symbol(\"$cat_name\")" :
+		    sprintf('Buy $%.0f %s(%s) in %s',
+			    $amount, $symbol, $cat_name, $acct_name);
+		my $exchange = ($exchanged < $gZero) ? 'Exchange' : undef;
 		$current_portfolio =
-		    $self->rebalanceBuy($symbol, $acct_name, $amount,
-					sprintf("Increase Cat \"%s\" by \$%.2f", $cat_name, $amount));
+		    $self->rebalanceBuy($symbol, $acct_name, $amount, $reason, $exchange);
 
 		$target_value -= $amount;
 		$cat_data->{$kCatBuy} += $amount;
@@ -1955,6 +2044,7 @@ sub sellHoldingsToMakeRoom {
        $rh_symbols_done,
        $r_remaining_amount,
        $reason,                     # Explanation
+       $exchange,                   # Another doc string -- sale is actually an exchange.
 	) = @_;
     
     return $total_amount if ($total_amount <= $gZero);
@@ -1977,8 +2067,10 @@ sub sellHoldingsToMakeRoom {
 	next if ($ticker->skip());
 	next if ($holding->value() < $gZero);
 	my $sell_amount = &Util::minimum($$r_remaining_amount, $holding->value());
-	$$r_current_portfolio = $self->rebalanceSale($symbol, $acct_name, $sell_amount, $reason);
+	$$r_current_portfolio = $self->rebalanceSale($symbol, $acct_name, $sell_amount,
+						     $reason, $exchange);
 	$$r_remaining_amount -= $sell_amount;
+	printf("        Need to sell \$%.2f more\n", $$r_remaining_amount);
 	last if ($$r_remaining_amount <= $gZero);
     }
 }
@@ -1990,6 +2082,7 @@ sub rebalanceBuy {
        $acct_name,
        $amount,     
        $reason,     # Just a documentation string.
+       $exchange,   # undef or 'Exchange' -- buy from previous exchange.
 	) = @_;
 
     my $deep_copy = $self->clonePortfolioForTransaction();
@@ -2001,7 +2094,13 @@ sub rebalanceBuy {
 	die();
     }
     my $price = $ticker->attribute('Price');
+    my $acct = $deep_copy->account($acct_name);
     my $shares = $amount / $price;
+    if (!defined($exchange)
+	&& $acct->fixed_size()
+	&& (($acct->{_unallocated} - $amount) < $gZero)) {
+	$reason = 'To use ALL cash ' . $reason;
+    }
 
     printf("      Buy %s (%s) Acct %s: %f shares @ \$%f = \$%.2f\n",
 	   $symbol, $reason, $acct_name, $shares, $price, $amount);
@@ -2026,6 +2125,7 @@ sub rebalanceSale {
        $acct_name,  
        $amount,     # If undef, then sell all.
        $reason,     # Just a documentation string.
+       $exchange,   # Another doc string -- sale is actually an exchange.
 	) = @_;
 
     my $deep_copy = $self->clonePortfolioForTransaction();
@@ -2043,6 +2143,22 @@ sub rebalanceSale {
     if (defined($amount)) {
 	$shares = $amount / $price;
     }
+    $reason = "$symbol in $acct_name" . $reason;
+    if ( abs($shares-$holding->shares()) < $gZero ) {
+	if (defined $self->{_sales}->{&holdingKey($symbol, $acct_name)}) {
+	    $reason = 'REMAINING shares ' . $reason;
+	} else {
+	    $reason = 'ALL shares ' . $reason;
+	}
+    } else {
+	$reason = sprintf('%.0f shares %s', $shares, $reason);
+    }
+    if (defined($exchange)) {
+	$reason = $exchange . ' ' . $reason;
+    } else {
+	$reason = 'Sell ' . $reason;
+    }
+    $self->{_sales}->{&holdingKey($symbol, $acct_name)}++;
     printf("      Sell %s (%s) Acct %s: %f shares @ \$%f = \$%.2f\n",
 	   $symbol, $reason, $acct_name, $shares, $price, $amount);
     my $rebal_trans = RebalTran::newSale(
@@ -2084,8 +2200,10 @@ sub printRebalanceLinesString {
     my $column_headers = $self->oneLinePortfolioColumnHeaders();
     &Util::printCsv($column_headers, $csv, $raS);
 
+    my $id = 0;
     $self->printOneLinePortfolioString(
 	$raS,
+	$id++,
 	'Starting Portfolio',
 	undef,
 	$column_headers,
@@ -2094,6 +2212,7 @@ sub printRebalanceLinesString {
     foreach my $rebalTran (@{$self->{_rebalTrans}}) {
 	$rebalTran->portfolio()->printOneLinePortfolioString(
 	    $raS,
+	    $id++,
 	    $rebalTran->reason(),
 	    $rebalTran->transaction(),
 	    $column_headers,
@@ -2106,12 +2225,12 @@ sub printRebalanceLinesString {
 sub oneLinePortfolioColumnHeaders {
     my($self, $final_portfolio) = @_;
     my $column_headers = [
+	$kRebalId,
+	$kRebalAction,
 	$kRebalReason,
-	$kRebalKey,
 	$kRebalSymbol,
 	$kRebalAccount,
 	$kRebalCategory,
-	$kRebalAction,
 	$kRebalShares,
 	$kRebalAmount,
 	$kRebalValue,
@@ -2160,7 +2279,8 @@ sub oneLinePortfolioColumnHeaders {
 
 sub printOneLinePortfolioString {
     my($self,
-       $raS,            # Out: Output is written back to this array. 
+       $raS,            # Out: Output is written back to this array.
+       $id,             # In: A counter to mark the transactions uniquely
        $reason,         # In: Reason string
        $transaction,    # In: Undef, or transaction that created this portfolio
        $column_headers, # In: If undef, calls oneLinePortfolioColumnHeaders.
@@ -2182,12 +2302,18 @@ sub printOneLinePortfolioString {
 	$row->{$kRebalSymbol} = $transaction->symbol();
 	$row->{$kRebalAccount} = $transaction->account();
 	my $hold_data = $self->{_perHoldingData}->{$key};
-	$row->{$kRebalCategory} = 
-	    $self->assetAllocation()->symbols()->{$symbol}->name();
+	if (defined $self->assetAllocation()->symbols()->{$symbol}) {
+	    $row->{$kRebalCategory} = 
+		$self->assetAllocation()->symbols()->{$symbol}->name();
+	} else {
+	    print "ERROR: self->assetAllocation()->symbols()->{", $symbol,
+	    "} undefined.\n";
+	}
 	$row->{$kRebalAction} = $transaction->action();
 	$row->{$kRebalShares} = $transaction->shares();
 	$row->{$kRebalAmount} = $transaction->amount();
     }
+    $row->{$kRebalId} = $id;
     $row->{$kRebalReason} = $reason;
     $row->{$kRebalUnallocated} = $self->unallocated();
     $row->{$kRebalValue} = $self->value();

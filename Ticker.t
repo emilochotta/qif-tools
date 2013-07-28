@@ -16,7 +16,9 @@ sub test_ByName : Test(9) {
     is($t->name(), 'DODGE & COX STOCK FUND', 'Ticker name');
     is($t->symbol(), 'DODGX', 'Ticker symbol');
     is($t->skip(), 1, 'Ticker skip');
-    is($t->attribute('Yield'), 1.68, 'Ticker name');
+
+    # This is a flakey test, update yield as it changes
+    is($t->attribute('Yield'), 1.43, 'Ticker name');
 
     my $t2 = Ticker::getBySymbol('DODGX');
     ok(defined($t), 'Ticker object was created');

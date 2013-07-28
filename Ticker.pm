@@ -148,6 +148,7 @@ my %Skip = (
     'Oracle Corp' => '1',
      'PASSIVE AGE BASED PORTFOLIO 5-8 - 2937' => '1',
      'PASSIVE AGE BASED PORTFOLIO 9-10 - 2938' => '1',
+     'PASSIVE AGE BASED PORTFOLIO 11-12 - 2939' => '1',
     'PHOENIX  INSIGHT SMALL CAP VALUE FUND CLASS A' => 'HSVZX',
      'PRINCIPAL SAM CONSERV GROWTH PORT CL B' => '1',
      'PRUDENTIAL JENNISON NATURAL RES C' => '1',
@@ -434,12 +435,13 @@ sub InitializeFromCsv {
 	if ($header->[0] ne "_ticker"
 	    || $header->[1] ne "_name"  
 	    || $header->[2] ne "_skip" ) {
-	    print "Header incorrect in $fname\n";
-	    return;
+	    my $msg = "Header incorrect in $fname\n";
+	    print $msg;
+	    die $msg;
 	}
     
 	while (my $row = $csv->getline($io)) {
-	    # print "\"", join(", ", @{ $row }), "\"\n";
+	    print "\"", join(", ", @{ $row }), "\"\n";
 	    my $symbol = $row->[0];
 	    my $name = $row->[1];
 
@@ -508,7 +510,7 @@ sub getByName
 	if (ref($name) ne '') {
 	    die "$name shouldn't be a ref";
 	}
-	my $msg = "** Add the following to \%Tickers or "
+	my $msg = "** Add the following to ticker-info.csv, \%Tickers or "
 	    . "\%Skip in Ticker.pm\n"
 	    . "    '" . $name . "' => '',\n";
 	die $msg;
